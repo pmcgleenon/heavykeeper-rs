@@ -31,7 +31,7 @@ An example driver program can be found at `main.rs`
 
 Usage:
 ```
-heavykeeper 10 8192 6 0.9 < data/war_and_peace.txt
+target/release/heavykeeper -k 10 -d 8 -w 8192 -y 0.9 -f data/war_and_peace.txt
 ```
 
 # License
