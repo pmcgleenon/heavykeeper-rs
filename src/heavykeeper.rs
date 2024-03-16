@@ -144,9 +144,11 @@ impl TopK {
         }
         // Implicitly, the heap is re-balanced upon each push or pop operation.
     }
-
+    
     pub fn list(&self) -> Vec<Node> {
-        self.min_heap.iter().cloned().collect()
+        let mut nodes = self.min_heap.iter().cloned().collect::<Vec<_>>();
+        nodes.sort();
+        nodes
     }
 }
 
