@@ -35,7 +35,7 @@ fn main() {
             let item = line.unwrap();
             // break item into words
             for word in item.split_whitespace() {
-                topk.add(word.as_bytes());
+                topk.add(word.as_bytes().to_vec());
             }
         }
     } else {
@@ -50,7 +50,7 @@ fn main() {
             let item = line.unwrap();
             // break item into words
             for word in item.split_whitespace() {
-                topk.add(word.as_bytes());
+                topk.add(word.as_bytes().to_vec());
             }
         }
     }
