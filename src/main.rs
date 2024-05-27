@@ -1,8 +1,8 @@
-use std::io::{self, BufRead, stdin};
+use std::io::{self, stdin, BufRead};
 use std::process::exit;
 
-use heavykeeper::TopK;
 use clap::Parser;
+use heavykeeper::TopK;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -21,10 +21,8 @@ struct Args {
 
     #[arg(short = 'f')]
     input: Option<String>,
-
 }
 fn main() {
-
     let args = Args::parse();
 
     let mut topk = TopK::new(args.k, args.width, args.depth, args.decay);
@@ -35,7 +33,7 @@ fn main() {
             let item = line.unwrap();
             // break item into words
             for word in item.split_whitespace() {
-                topk.add(word.as_bytes());
+                topk.add(word.as_bytes().to_vec());
             }
         }
     } else {
@@ -50,12 +48,11 @@ fn main() {
             let item = line.unwrap();
             // break item into words
             for word in item.split_whitespace() {
-                topk.add(word.as_bytes());
+                topk.add(word.as_bytes().to_vec());
             }
         }
     }
 
-    
     for node in topk.list() {
         println!("{} {}", String::from_utf8_lossy(&node.item), node.count);
     }
