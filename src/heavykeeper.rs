@@ -29,7 +29,7 @@ impl<T: Ord> PartialOrd for Node<T> {
     }
 }
 
-pub struct TopK<T: Ord + Clone + AsRef<[u8]> + Hash + Debug> {
+pub struct TopK<T: Ord + Clone + Hash + Debug> {
     width: usize,
     depth: usize,
     decay: f64,
@@ -37,7 +37,8 @@ pub struct TopK<T: Ord + Clone + AsRef<[u8]> + Hash + Debug> {
     min_heap: BinaryHeap<Node<T>>,
 }
 
-impl<T: Ord + Clone + AsRef<[u8]> + Hash + Debug> TopK<T> {
+
+impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
     pub fn new(k: usize, width: usize, depth: usize, decay: f64) -> Self {
         let buckets = vec![vec![Bucket::default(); width]; depth];
         TopK {
@@ -96,8 +97,7 @@ impl<T: Ord + Clone + AsRef<[u8]> + Hash + Debug> TopK<T> {
         let mut min_heap: Vec<&Node<T>> = self.min_heap.iter().collect();
         min_heap.sort_by(|a, b| b.count.cmp(&a.count));
         for node in min_heap {
-            let item_str = String::from_utf8_lossy(node.item.as_ref());
-            println!("Node - Item: {}, Count: {}", item_str, node.count);
+            println!("Node - Item: {:?}, Count: {}", node.item, node.count);
         }
     }
 
