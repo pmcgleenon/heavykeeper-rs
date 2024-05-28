@@ -126,6 +126,11 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
             }
         }
 
+        // Early exit if max_count is less than the smallest count in the heap
+        if self.min_heap.len() == self.min_heap.capacity() && max_count <= self.min_heap.peek().unwrap().count {
+            return;
+        }
+
         // Update the min_heap
         let mut found = false;
         let mut nodes = self.min_heap.drain().collect::<Vec<_>>();
@@ -136,6 +141,7 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
                 break;
             }
         }
+
 
         // Reinsert nodes back into the heap
         for node in nodes {
