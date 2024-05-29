@@ -5,6 +5,9 @@ use std::collections::BinaryHeap;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 
+
+const DECAY_LOOKUP_SIZE: usize = 1024;
+
 #[derive(Default, Clone, Debug)]
 struct Bucket {
     fingerprint: u64,
@@ -33,22 +36,36 @@ pub struct TopK<T: Ord + Clone + Hash + Debug> {
     width: usize,
     depth: usize,
     decay: f64,
+    decay_thresholds: Vec<u32>,
     buckets: Vec<Vec<Bucket>>,
     min_heap: BinaryHeap<Node<T>>,
 }
 
+fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Vec<u32> {
+    let mut thresholds = Vec::with_capacity(num_entries);
+    for count in 0..num_entries {
+        let decay_factor = decay.powf(count as f64);
+        let threshold = (decay_factor * (1u32 << 31) as f64) as u32;
+        thresholds.push(threshold);
+    }
+    thresholds
+}
 
 impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
     pub fn new(k: usize, width: usize, depth: usize, decay: f64) -> Self {
+        let decay_thresholds = precompute_decay_thresholds(decay, DECAY_LOOKUP_SIZE);
         let buckets = vec![vec![Bucket::default(); width]; depth];
         TopK {
             width,
             depth,
             decay,
+            decay_thresholds,
             buckets,
             min_heap: BinaryHeap::with_capacity(k),
         }
     }
+
+
 
     pub fn query(&self, item: &T) -> bool {
         self.min_heap.iter().any(|node| &node.item == item)
@@ -78,6 +95,7 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
         println!("width: {}", self.width);
         println!("depth: {}", self.depth);
         println!("decay: {}", self.decay);
+        println!("decay thresholds: {:?}", self.decay_thresholds);
         let mut buckets: Vec<(&Bucket, usize, usize)> = self
             .buckets
             .iter()
@@ -118,10 +136,15 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
                 bucket.count += 1;
                 max_count = std::cmp::max(max_count, bucket.count);
             } else {
-                // Apply decay based on the algorithm's logic
-                let decay_factor = self.decay.powi(bucket.count as i32);
-                if random::<f64>() < decay_factor {
-                    bucket.count -= 1;
+                // Use the precomputed decay threshold based on the bucket count
+                let decay_threshold = if (bucket.count as usize) < self.decay_thresholds.len() {
+                    self.decay_thresholds[bucket.count as usize]
+                } else {
+                    self.decay_thresholds.last().cloned().unwrap_or_default()
+                };
+                // Apply bitwise decay based on the decay threshold
+                if random::<u32>() < decay_threshold {
+                    bucket.count = bucket.count.saturating_sub(1);
                 }
             }
         }
@@ -175,7 +198,6 @@ mod tests {
         let depth = 5;
         let decay = 0.9;
 
-        //let topk: TopK<u8> = TopK::new(k, width, depth, decay);
         let topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
         assert_eq!(topk.width, 100);
         assert_eq!(topk.depth, 5);
