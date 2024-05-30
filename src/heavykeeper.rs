@@ -132,17 +132,8 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
             let bucket_idx = self.hash(combined) % self.width as u64;
             let bucket_idx = bucket_idx as usize;
             let bucket = &mut self.buckets[i][bucket_idx];
-
-            // Refactored this code to improve branch prediction
-            // if bucket.fingerprint == item_fingerprint || bucket.count == 0 {
-            //     bucket.fingerprint = item_fingerprint;
-            //     bucket.count += 1;
-            //     max_count = std::cmp::max(max_count, bucket.count);
-            // } else {
-
-            let fingerprint_match : u32 = (bucket.fingerprint == item_fingerprint).into();
-            let count_is_zero: u32 = (bucket.count == 0).into();
-            if (fingerprint_match | count_is_zero) > 0  {
+            
+            if bucket.fingerprint == item_fingerprint || bucket.count == 0 {
                 bucket.fingerprint = item_fingerprint;
                 bucket.count += 1;
                 max_count = std::cmp::max(max_count, bucket.count);
