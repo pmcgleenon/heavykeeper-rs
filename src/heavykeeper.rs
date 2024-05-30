@@ -6,6 +6,8 @@ use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 
 
+
+
 const DECAY_LOOKUP_SIZE: usize = 1024;
 
 #[derive(Default, Clone, Debug)]
@@ -131,7 +133,16 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
             let bucket_idx = bucket_idx as usize;
             let bucket = &mut self.buckets[i][bucket_idx];
 
-            if bucket.fingerprint == item_fingerprint || bucket.count == 0 {
+            // Refactored this code to improve branch prediction
+            // if bucket.fingerprint == item_fingerprint || bucket.count == 0 {
+            //     bucket.fingerprint = item_fingerprint;
+            //     bucket.count += 1;
+            //     max_count = std::cmp::max(max_count, bucket.count);
+            // } else {
+
+            let fingerprint_match : u32 = (bucket.fingerprint == item_fingerprint).into();
+            let count_is_zero: u32 = (bucket.count == 0).into();
+            if (fingerprint_match | count_is_zero) > 0  {
                 bucket.fingerprint = item_fingerprint;
                 bucket.count += 1;
                 max_count = std::cmp::max(max_count, bucket.count);
