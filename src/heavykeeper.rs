@@ -142,9 +142,13 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
 
             let fingerprint_match : u32 = (bucket.fingerprint == item_fingerprint).into();
             let count_is_zero: u32 = (bucket.count == 0).into();
+            let new_count: [u64; 2] = [bucket.count + 1, bucket.count];
+            let new_fingerprint: [u64; 2] = [item_fingerprint, bucket.fingerprint];
             if (fingerprint_match | count_is_zero) > 0  {
-                bucket.fingerprint = item_fingerprint;
-                bucket.count += 1;
+                // bucket.fingerprint = item_fingerprint;
+                // bucket.count += 1;
+                bucket.fingerprint = new_fingerprint[0];
+                bucket.count = new_count[0];
                 max_count = std::cmp::max(max_count, bucket.count);
             } else {
                 // Use the precomputed decay threshold based on the bucket count
