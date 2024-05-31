@@ -22,6 +22,7 @@ struct Args {
     #[arg(short = 'f')]
     input: Option<String>,
 }
+
 fn main() {
     let args = Args::parse();
 

@@ -5,9 +5,6 @@ use std::collections::BinaryHeap;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 
-
-
-
 const DECAY_LOOKUP_SIZE: usize = 1024;
 
 #[derive(Default, Clone, Debug)]

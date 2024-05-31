@@ -11,9 +11,18 @@ path = "src/lib.rs"
 
 
 [dependencies]
-rand = "0.9.0-alpha.0"
+rand = "0.8.5"
 ahash = "0.8.11"
 clap = { version = "4.5.4", features = ["derive"] }
 
 [profile.release]
 debug = true
+
+[dev-dependencies]
+rand_distr = "0.4.3"
+criterion = "0.5.1"
+zipf = "7.0.1"
+
+[[bench]]
+name = "topk_add"
+harness = false
