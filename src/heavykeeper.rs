@@ -179,7 +179,13 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
         }
 
         let space_in_heap = self.priority_queue.len() < self.top_items;
-        let new_max = max_count >= self.priority_queue.peek().map_or(0, |v| v.1 .0);
+        let curr_min = self.priority_queue.peek().map_or(0, |v| v.1 .0);
+        // skip if max_count is less than the smallest count in the min-heap
+        if max_count < curr_min && !space_in_heap {
+            return;
+        }
+
+        let new_max = max_count >= curr_min;
 
         if self.priority_queue.get(&item).is_some() {
             self.priority_queue.change_priority(&item, Reverse(max_count));
