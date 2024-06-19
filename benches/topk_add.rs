@@ -8,7 +8,7 @@ fn benchmark_topk_add(c: &mut Criterion) {
 
     let mut rng = rand::thread_rng();
     let zipf = ZipfDistribution::new(100_000, 1.03).unwrap();
-    let mut topk = TopK::new(10, 1024, 5, 0.95);
+    let mut topk = TopK::new(10, 1024, 2, 0.95);
 
     let mut data = vec![];
     for _ in 0..1_000_000 {
