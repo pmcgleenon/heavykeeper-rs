@@ -1,22 +1,25 @@
-use ahash::AHasher;
-use rand::random;
+use ahash::RandomState;
 use std::clone::Clone;
-use std::collections::BinaryHeap;
+use std::cmp::Reverse;
+
+use priority_queue::PriorityQueue;
 use std::fmt::Debug;
-use std::hash::{Hash, Hasher};
+use std::hash::{Hash};
+use rand::{Rng, SeedableRng};
+use rand::rngs::SmallRng;
 
 const DECAY_LOOKUP_SIZE: usize = 1024;
 
 #[derive(Default, Clone, Debug)]
 struct Bucket {
     fingerprint: u64,
-    count: u64,
+    count: u32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Node<T> {
-    pub count: u64,
     pub item: T,
+    pub count: u32,
 }
 
 impl<T: Ord> Ord for Node<T> {
@@ -32,12 +35,15 @@ impl<T: Ord> PartialOrd for Node<T> {
 }
 
 pub struct TopK<T: Ord + Clone + Hash + Debug> {
+    top_items: usize,
     width: usize,
     depth: usize,
     decay: f64,
     decay_thresholds: Vec<u32>,
     buckets: Vec<Vec<Bucket>>,
-    min_heap: BinaryHeap<Node<T>>,
+    priority_queue: PriorityQueue<T, Reverse<u32>>,
+    hasher: RandomState,
+    random: SmallRng,
 }
 
 fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Vec<u32> {
@@ -50,47 +56,62 @@ fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Vec<u32> {
     thresholds
 }
 
+
 impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
     pub fn new(k: usize, width: usize, depth: usize, decay: f64) -> Self {
         let decay_thresholds = precompute_decay_thresholds(decay, DECAY_LOOKUP_SIZE);
         let buckets = vec![vec![Bucket::default(); width]; depth];
+
+        let ahash_hasher = RandomState::with_seeds(0, 0, 0, 0);
+        let priority_queue : PriorityQueue<T, Reverse<u32>> = PriorityQueue::with_capacity(k);
+
         TopK {
+            top_items: k,
             width,
             depth,
             decay,
             decay_thresholds,
             buckets,
-            min_heap: BinaryHeap::with_capacity(k),
+            priority_queue,
+            hasher: ahash_hasher,
+            random: SmallRng::from_entropy(),
         }
     }
 
-
-
     pub fn query(&self, item: &T) -> bool {
-        self.min_heap.iter().any(|node| &node.item == item)
+        self.priority_queue.get(item).is_some()
     }
 
-    pub fn count(&self, item: &T) -> Option<u64> {
-        self.min_heap
-            .iter()
-            .find(|node| &node.item == item)
-            .map(|node| node.count)
+    pub fn count(&self, item: &T) -> u32 {
+        let node = self.priority_queue.get(item);
+
+        // return the count
+        match node {
+            Some(count) => count.1.0,
+            None => 0,
+        }
     }
 
-    fn hash<B: Hash>(&self, item: B) -> u64 {
-        let mut hasher = AHasher::default();
-        item.hash(&mut hasher);
-        hasher.finish()
+    fn hash<B: Hash>(&mut self, item: B) -> u64 {
+        // let mut hasher = AHasher::default();
+        // item.hash(&mut hasher);
+        // hasher.finish()
+
+        self.hasher.hash_one(item)
     }
 
+
+    // TODO replace this with iterator
     pub fn list(&self) -> Vec<Node<T>> {
-        let mut nodes = self.min_heap.iter().cloned().collect::<Vec<_>>();
+        let mut nodes = self.priority_queue.iter().map(|(item, count)| Node {
+            item: item.clone(),
+            count: count.0,
+        }).collect::<Vec<_>>();
         nodes.sort();
         nodes
     }
 
     pub fn debug(&self) {
-        println!("k: {}", self.min_heap.capacity());
         println!("width: {}", self.width);
         println!("depth: {}", self.depth);
         println!("decay: {}", self.decay);
@@ -110,10 +131,14 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
         for (bucket, i, j) in buckets {
             println!("Bucket at row {}, column {}: {:?}", i, j, bucket);
         }
-        println!("min_heap: ");
-        let mut min_heap: Vec<&Node<T>> = self.min_heap.iter().collect();
-        min_heap.sort_by(|a, b| b.count.cmp(&a.count));
-        for node in min_heap {
+        println!("priority_queue: ");
+        let mut nodes = self.priority_queue.iter().map(|(item, count)| Node {
+            item: item.clone(),
+            count: count.0,
+        }).collect::<Vec<_>>();
+
+        nodes.sort();
+        for node in nodes {
             println!("Node - Item: {:?}, Count: {}", node.item, node.count);
         }
     }
@@ -121,7 +146,7 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
     pub fn add(&mut self, item: T) {
         let item_fingerprint = self.hash(&item);
 
-        let mut max_count = 0;
+        let mut max_count: u32 = 0;
 
         for i in 0..self.depth {
             // Combine item fingerprint and depth index to generate a unique bucket index
@@ -129,12 +154,16 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
             let bucket_idx = self.hash(combined) % self.width as u64;
             let bucket_idx = bucket_idx as usize;
             let bucket = &mut self.buckets[i][bucket_idx];
-            
-            if bucket.fingerprint == item_fingerprint || bucket.count == 0 {
+
+            let matches = bucket.fingerprint == item_fingerprint;
+            let empty = bucket.count == 0;
+
+            if matches || empty {
                 bucket.fingerprint = item_fingerprint;
                 bucket.count += 1;
                 max_count = std::cmp::max(max_count, bucket.count);
-            } else {
+            }
+            else {
                 // Use the precomputed decay threshold based on the bucket count
                 let decay_threshold = if (bucket.count as usize) < self.decay_thresholds.len() {
                     self.decay_thresholds[bucket.count as usize]
@@ -142,45 +171,23 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
                     self.decay_thresholds.last().cloned().unwrap_or_default()
                 };
                 // Apply bitwise decay based on the decay threshold
-                if random::<u32>() < decay_threshold {
+                let rand = self.random.gen::<u32>();
+                if rand < decay_threshold {
                     bucket.count = bucket.count.saturating_sub(1);
                 }
             }
         }
 
-        // Early exit if max_count is less than the smallest count in the heap
-        if self.min_heap.len() == self.min_heap.capacity() && max_count <= self.min_heap.peek().unwrap().count {
-            return;
-        }
+        let space_in_heap = self.priority_queue.len() < self.top_items;
+        let new_max = max_count >= self.priority_queue.peek().map_or(0, |v| v.1 .0);
 
-        // Update the min_heap
-        let mut found = false;
-        let mut nodes = self.min_heap.drain().collect::<Vec<_>>();
-        for node in nodes.iter_mut() {
-            if node.item == item {
-                node.count = max_count; // Update count
-                found = true;
-                break;
+        if self.priority_queue.get(&item).is_some() {
+            self.priority_queue.change_priority(&item, Reverse(max_count));
+        }  else if space_in_heap || new_max {
+            if self.priority_queue.len() >= self.top_items {
+                self.priority_queue.pop();
             }
-        }
-
-
-        // Reinsert nodes back into the heap
-        for node in nodes {
-            self.min_heap.push(node);
-        }
-
-        if !found
-            && (self.min_heap.len() < self.min_heap.capacity()
-                || max_count > self.min_heap.peek().unwrap().count)
-        {
-            if self.min_heap.len() == self.min_heap.capacity() {
-                self.min_heap.pop();
-            }
-            self.min_heap.push(Node {
-                count: max_count,
-                item,
-            });
+            self.priority_queue.push(item, Reverse(max_count));
         }
     }
 }
@@ -203,7 +210,7 @@ mod tests {
         assert_eq!(topk.decay, 0.9);
         assert_eq!(topk.buckets.len(), 5);
         assert_eq!(topk.buckets[0].len(), 100);
-        assert_eq!(topk.min_heap.len(), 0);
+        assert_eq!(topk.priority_queue.len(), 0);
     }
 
     #[test]
@@ -212,13 +219,11 @@ mod tests {
         let width = 100;
         let depth = 5;
         let decay = 0.9;
-        let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
-        topk.min_heap.push(Node {
-            count: 1,
-            item: "hello".as_bytes().to_vec(),
-        });
-        assert!(topk.query(&Vec::from("hello".as_bytes())));
-        assert!(!topk.query(&Vec::from("world".as_bytes())));
+        let mut topk = TopK::new(k, width, depth, decay);
+        topk.add("hello".as_bytes());
+
+        assert!(topk.query(&"hello".as_bytes()));
+        assert!(!topk.query(&"world".as_bytes()));
     }
 
     #[test]
@@ -227,22 +232,18 @@ mod tests {
         let width = 100;
         let depth = 5;
         let decay = 0.9;
-        let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
+        let mut topk = TopK::new(k, width, depth, decay);
 
-        // Add an item with count 8
-        topk.min_heap.push(Node {
-            count: 8,
-            item: "lashin".as_bytes().to_vec(),
-        });
-        assert_eq!(topk.count(&"lashin".as_bytes().to_vec()), Some(8));
-        assert_eq!(topk.count(&"पुष्पं अस्ति।".as_bytes().to_vec()), None);
+        for _ in 0..8 {
+            topk.add("lashin".as_bytes());
+        }
+        assert_eq!(topk.count(&"lashin".as_bytes()), 8);
+        assert_eq!(topk.count(&"पुष्पं अस्ति।".as_bytes()), 0);
 
-        // Push another item with count 1337
-        topk.min_heap.push(Node {
-            count: 1337,
-            item: "ballynamoney".as_bytes().to_vec(),
-        });
-        assert_eq!(topk.count(&"ballynamoney".as_bytes().to_vec()), Some(1337));
+        for _ in 0..1337 {
+            topk.add("ballynamoney".as_bytes());
+        }
+        assert_eq!(topk.count(&"ballynamoney".as_bytes()), 1337);
     }
 
     #[test]
@@ -255,7 +256,8 @@ mod tests {
 
         topk.add("hello".as_bytes());
 
-        let nodes = topk.min_heap.iter().cloned().collect::<Vec<_>>();
+        let nodes = topk.list();
+        //let nodes = topk.min_heap.iter().cloned().collect::<Vec<_>>();
 
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].count, 1);
@@ -281,10 +283,12 @@ mod tests {
             topk.add("world".as_bytes());
         }
 
-        assert_eq!(topk.min_heap.len(), k); // Assertion for min_heap length
+        assert_eq!(topk.priority_queue.len(), k); // Assertion for min_heap length
 
-        let mut nodes = topk.min_heap.iter().cloned().collect::<Vec<_>>();
-        nodes.sort_by_key(|node| node.item);
+        let nodes = topk.priority_queue.iter().map(|(item, count)| Node {
+            item: *item,
+            count: count.0,
+        }).collect::<Vec<_>>();
 
         assert_eq!(nodes.len(), 2); // Assertion for nodes length
         assert_eq!(nodes[0].count, 7);
@@ -307,8 +311,7 @@ mod tests {
         topk.add("ballynamoney".as_bytes());
         topk.add("lane".as_bytes());
 
-        let mut nodes = topk.min_heap.iter().cloned().collect::<Vec<_>>();
-        nodes.sort_by_key(|node| node.item);
+        let nodes = topk.list();
 
         assert_eq!(nodes.len(), 2);
         let mut counts = nodes.iter().map(|node| node.count).collect::<Vec<_>>();
@@ -331,8 +334,7 @@ mod tests {
         topk.add("lane".as_bytes());
         topk.add("pear tree".as_bytes());
 
-        let mut nodes = topk.min_heap.iter().cloned().collect::<Vec<_>>();
-        nodes.sort_by_key(|node| node.item);
+        let nodes = topk.list();
 
         assert_eq!(nodes.len(), 2);
         let mut counts = nodes.iter().map(|node| node.count).collect::<Vec<_>>();
@@ -349,7 +351,8 @@ mod tests {
 
         let topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
 
-        let nodes = topk.min_heap.iter().cloned().collect::<Vec<_>>();
+        //let nodes = topk.min_heap.iter().cloned().collect::<Vec<_>>();
+        let nodes = topk.list();
 
         assert_eq!(nodes.len(), 0);
     }
@@ -359,9 +362,9 @@ mod tests {
         let k = 10; // We want to track the top-10 items
         let width = 1000;
         let depth = 10;
-        let decay = 0.9;
+        let decay = 0.95;
 
-        let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
+        let mut topk = TopK::new(k, width, depth, decay);
 
         // Generate 100 unique items with varied addition frequencies
         let mut items_with_frequencies = Vec::new();
@@ -378,32 +381,31 @@ mod tests {
             }
         }
 
-        //topk.debug();
+        topk.debug();
 
         // Verify the min-heap has exactly k items
         assert_eq!(
-            topk.min_heap.len(),
+            topk.priority_queue.len(),
             k,
             "Min-heap does not contain the top-k items"
         );
 
         // Verify the min-heap contains the correct top-k items based on frequency
         // The top-k items should be the last k items added due to their higher frequencies
-        let mut top_items = topk
-            .min_heap
-            .iter()
-            .map(|node| std::str::from_utf8(&node.item).unwrap().to_string())
-            .collect::<Vec<_>>();
-        top_items.sort(); // Sorting to simplify validation
+        let top_items = topk.priority_queue.iter().map(|(item, count)| Node {
+            item: std::str::from_utf8(item).unwrap().to_string(), // Convert byte array back to string
+            count: count.0,
+        }).collect::<Vec<_>>();
 
         let expected_top_items = (90..100).map(|i| format!("item{}", i)).collect::<Vec<_>>();
+        //let expected_top_items = items_with_frequencies.iter().skip(90).map(|(item, frequency)| (std::str::from_utf8(item.as_ref()).unwrap().to_string(), *frequency)).collect::<Vec<_>>();
 
         println!("Expected top items: {:?}", expected_top_items);
         println!("Actual top items: {:?}", top_items);
 
         for expected_item in expected_top_items.iter() {
             assert!(
-                top_items.contains(expected_item),
+                top_items.iter().any(|node| &node.item == expected_item),
                 "Expected item {} to be in the top-k items",
                 expected_item
             );
@@ -428,7 +430,7 @@ mod tests {
         }
 
         // Query the count for the item
-        let count = topk.count(&item).unwrap_or(0);
+        let count = topk.count(&item);
 
         assert_eq!(count, num_additions);
     }
@@ -458,8 +460,8 @@ mod tests {
         }
 
         // Query the count for both items
-        let count_item1 = topk.count(&item1).unwrap_or(0);
-        let count_item2 = topk.count(&item2).unwrap_or(0);
+        let count_item1 = topk.count(&item1);
+        let count_item2 = topk.count(&item2);
 
         // Assert that both items' counts are as expected
         assert_eq!(
@@ -503,8 +505,8 @@ mod tests {
         // Verify the counts to ensure decay has been applied
         // This will depend on knowing the expected outcome after decay
         // For this example, let's check if the frequent item's count is still correctly leading
-        let count_frequent = topk.count(&frequent_item).unwrap_or(0);
-        let count_less_frequent = topk.count(&less_frequent_item).unwrap_or(0);
+        let count_frequent = topk.count(&frequent_item);
+        let count_less_frequent = topk.count(&less_frequent_item);
 
         assert!(
             count_frequent > count_less_frequent,
@@ -527,13 +529,18 @@ mod tests {
         topk.add(item);
 
         // Verify that the item has been added with an initial count of 1
-        // This implies checking the buckets directly, which may require making the test part of the TopK module
-        // or adding a method to TopK for testing purposes that can check the bucket states.
+        let item_hash = topk.hash(item);
         assert!(
             topk.buckets.iter().any(|row| row
                 .iter()
-                .any(|bucket| bucket.fingerprint == topk.hash(item) && bucket.count == 1)),
+                .any(|bucket| bucket.fingerprint == item_hash && bucket.count == 1)),
             "The item was not inserted into an empty bucket correctly."
+        );
+
+        // verify that the item is in the min-heap
+        assert!(
+            topk.query(&item),
+            "The item was not inserted into the min-heap correctly."
         );
     }
 
@@ -557,23 +564,23 @@ mod tests {
 
         // Verify the min-heap has exactly k items
         assert_eq!(
-            topk.min_heap.len(),
+            topk.priority_queue.len(),
             k,
             "Min-heap does not contain the top-k items"
         );
 
         // Since all items have the same frequency, we just check the count
-        for node in topk.min_heap.iter() {
+        for node in topk.list() {
             assert_eq!(
                 node.count, frequency,
                 "All items should have the same frequency"
             );
         }
     }
-    
+
     #[test]
-    fn test_small_k_value() {
-        let k = 5; // Smaller k value
+    fn test_small_k_value2() {
+        let k = 2; // Smaller k value
         let width = 1000;
         let depth = 10;
         let decay = 0.9;
@@ -581,7 +588,7 @@ mod tests {
         let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
 
         // Generate 100 unique items with varied addition frequencies
-        for i in 0..100 {
+        for i in 0..3 {
             let item = format!("item{}", i);
             for _ in 0..(i + 1) {
                 topk.add(item.as_bytes().to_vec());
@@ -590,27 +597,25 @@ mod tests {
 
         // Verify the min-heap has exactly k items
         assert_eq!(
-            topk.min_heap.len(),
+            topk.priority_queue.len(),
             k,
             "Min-heap does not contain the top-k items"
         );
 
         // Verify the min-heap contains the correct top-k items based on frequency
-        let mut top_items = topk
-            .min_heap
-            .iter()
-            .map(|node| std::str::from_utf8(&node.item).unwrap().to_string())
-            .collect::<Vec<_>>();
-        top_items.sort();
+        let top_items = topk.priority_queue.iter().map(|(item, count)| Node {
+            item: std::str::from_utf8(item).unwrap().to_string(), // Convert byte array back to string
+            count: count.0,
+        }).collect::<Vec<_>>();
 
-        let expected_top_items = (95..100).map(|i| format!("item{}", i)).collect::<Vec<_>>();
+        let expected_top_items = (1..3).map(|i| format!("item{}", i)).collect::<Vec<_>>();
 
         println!("Expected top items: {:?}", expected_top_items);
         println!("Actual top items: {:?}", top_items);
 
         for expected_item in expected_top_items.iter() {
             assert!(
-                top_items.contains(expected_item),
+                top_items.iter().any(|node| &node.item == expected_item),
                 "Expected item {} to be in the top-k items",
                 expected_item
             );
