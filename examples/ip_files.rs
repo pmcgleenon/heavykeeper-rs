@@ -94,7 +94,7 @@ fn main() -> io::Result<()> {
     println!("throughput: {} Mpps, each insert operation uses {} ns", throughput, 1_000.0 / throughput);
 
     for node in topk.list() {
-        // each node is a tuple of (item, count)
+
         // item is a 13 byte big-endian encoding of
         // protocol (1byte), src_ip (4bytes), dst_ip (4bytes), src_port (2bytes), dst_port (2bytes)
         // count is the number of times the item has been added

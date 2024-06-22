@@ -30,8 +30,15 @@ A sample usage is as follows:
 
 # Other Implementations
 
-[Jigsaw-Sketch: a fast and accurate algorithm for finding top-k elephant flows in high-speed networks](http://scis.scichina.com/en/2024/142101.pdf)
-Boyu ZHANG, He HUANG, Yu-E SUN, Yang DU & Dan WANG
+| Name                    | Language | Github Repo                                                               |
+|-------------------------|----------|---------------------------------------------------------------------------|
+| SegmentIO               | go       | https://github.com/segmentio/topk                                         |
+| Aegis                   | go       | https://github.com/go-kratos/aegis/blob/main/topk/heavykeeper.go          |
+| Tomasz Kolaj            | go       | https://github.com/migotom/heavykeeper                                    | 
+| HeavyKeeper Paper       | C++      | https://github.com/papergitkeeper/heavy-keeper-project                    |
+| Jigsaw-Sketch           | C++      | https://github.com/duyang92/jigsaw-sketch-paper/tree/main/CPU/HeavyKeeper |
+| Redis Bloom Heavykeeper | C        | https://github.com/RedisBloom/RedisBloom/blob/master/src/topk.c           |
+| Count-Min-Sketch        | Rust     | https://github.com/alecmocatta/streaming_algorithms                       |
 
 # Running
 
