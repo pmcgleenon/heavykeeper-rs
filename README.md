@@ -30,15 +30,16 @@ A sample usage is as follows:
 
 # Other Implementations
 
-| Name                    | Language | Github Repo                                                               |
-|-------------------------|----------|---------------------------------------------------------------------------|
-| SegmentIO               | go       | https://github.com/segmentio/topk                                         |
-| Aegis                   | go       | https://github.com/go-kratos/aegis/blob/main/topk/heavykeeper.go          |
-| Tomasz Kolaj            | go       | https://github.com/migotom/heavykeeper                                    | 
-| HeavyKeeper Paper       | C++      | https://github.com/papergitkeeper/heavy-keeper-project                    |
-| Jigsaw-Sketch           | C++      | https://github.com/duyang92/jigsaw-sketch-paper/tree/main/CPU/HeavyKeeper |
-| Redis Bloom Heavykeeper | C        | https://github.com/RedisBloom/RedisBloom/blob/master/src/topk.c           |
-| Count-Min-Sketch        | Rust     | https://github.com/alecmocatta/streaming_algorithms                       |
+| Name                       | Language | Github Repo                                                                  |
+|----------------------------|----------|------------------------------------------------------------------------------|
+| SegmentIO                  | Go       | https://github.com/segmentio/topk                                            |
+| Aegis                      | Go       | https://github.com/go-kratos/aegis/blob/main/topk/heavykeeper.go             |
+| Tomasz Kolaj               | Go       | https://github.com/migotom/heavykeeper                                       |
+| HeavyKeeper Paper          | C++      | https://github.com/papergitkeeper/heavy-keeper-project                       |
+| Jigsaw-Sketch              | C++      | https://github.com/duyang92/jigsaw-sketch-paper/tree/main/CPU/HeavyKeeper    |
+| Redis Bloom Heavykeeper    | C        | https://github.com/RedisBloom/RedisBloom/blob/master/src/topk.c              |
+| Count-Min-Sketch           | Rust     | https://github.com/alecmocatta/streaming_algorithms                          |
+| Sliding Window HeavyKeeper | Go       | https://github.com/keilerkonzept/topk                                        |
 
 # Running
 
