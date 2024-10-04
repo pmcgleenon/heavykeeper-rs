@@ -1,6 +1,6 @@
 [package]
 name = "heavykeeper"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 authors = [ "Patrick McGleenon"]
 description = "A library for finding the top-k elements of a stream of data."
@@ -21,7 +21,7 @@ path = "src/lib.rs"
 [dependencies]
 rand = { version = "0.8.5", features = [ "small_rng" ] }
 ahash = "0.8.11"
-clap = { version = "4.5.4", features = ["derive"] }
+clap = { version = "4.5.19", features = ["derive"] }
 priority-queue = "2.1.1"
 
 [profile.release]
