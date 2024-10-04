@@ -83,12 +83,30 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
     }
 
     pub fn count(&self, item: &T) -> u32 {
-        let node = self.priority_queue.get(item);
+        // First, check the priority queue
+        if let Some(count) = self.priority_queue.get(item) {
+            return count.1.0;
+        }
 
-        // return the count
-        match node {
-            Some(count) => count.1.0,
-            None => 0,
+        // If not in the priority queue, check the sketch
+        let item_fingerprint = self.hasher.hash_one(item);
+        let mut min_count = u32::MAX;
+
+        for i in 0..self.depth {
+            let combined = (item_fingerprint, i);
+            let bucket_idx = self.hasher.hash_one(combined) % self.width as u64;
+            let bucket_idx = bucket_idx as usize;
+            let bucket = &self.buckets[i][bucket_idx];
+
+            if bucket.fingerprint == item_fingerprint {
+                min_count = min_count.min(bucket.count);
+            }
+        }
+
+        if min_count == u32::MAX {
+            0
+        } else {
+            min_count
         }
     }
 
@@ -626,5 +644,33 @@ mod tests {
                 expected_item
             );
         }
+    }
+
+    #[test]
+    fn test_count_with_sketch() {
+        let k = 2;
+        let width = 100;
+        let depth = 5;
+        let decay = 0.9;
+        let mut topk = TopK::new(k, width, depth, decay);
+
+        // Add items to fill the priority queue
+        topk.add("item1".as_bytes());
+        topk.add("item2".as_bytes());
+
+        // Add an item that won't make it to the priority queue
+        for _ in 0..5 {
+            topk.add("item3".as_bytes());
+        }
+
+        // Check counts
+        assert_eq!(topk.count(&"item1".as_bytes()), 1);
+        assert_eq!(topk.count(&"item2".as_bytes()), 1);
+        
+        // This item should be in the sketch but not in the priority queue
+        assert_eq!(topk.count(&"item3".as_bytes()), 5);
+
+        // This item was never added
+        assert_eq!(topk.count(&"item4".as_bytes()), 0);
     }
 }
