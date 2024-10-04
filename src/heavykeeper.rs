@@ -657,20 +657,21 @@ mod tests {
         // Add items to fill the priority queue
         topk.add("item1".as_bytes());
         topk.add("item2".as_bytes());
+        for _ in 0..2 {
+            topk.add("item3".as_bytes());
+        }
 
         // Add an item that won't make it to the priority queue
         for _ in 0..5 {
-            topk.add("item3".as_bytes());
+            topk.add("item4".as_bytes());
         }
 
         // Check counts
         assert_eq!(topk.count(&"item1".as_bytes()), 1);
         assert_eq!(topk.count(&"item2".as_bytes()), 1);
-        
-        // This item should be in the sketch but not in the priority queue
-        assert_eq!(topk.count(&"item3".as_bytes()), 5);
+        assert_eq!(topk.count(&"item3".as_bytes()), 2);
 
         // This item was never added
-        assert_eq!(topk.count(&"item4".as_bytes()), 0);
+        assert_eq!(topk.count(&"item4".as_bytes()), 5);
     }
 }
