@@ -1,6 +1,5 @@
-use std::io::{self, stdin, BufRead};
+use std::io::{self, BufRead};
 use std::process::exit;
-
 use clap::Parser;
 use heavykeeper::TopK;
 
@@ -26,35 +25,35 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let mut topk = TopK::new(args.k, args.width, args.depth, args.decay);
+    let mut topk = TopK::<String>::new(args.k, args.width, args.depth, args.decay);
+
+    let mut process_line = |line: &str| {
+        for word in line.split_whitespace() {
+            topk.add(word.to_string());
+        }
+    };
 
     if args.input.is_none() {
-        let stdin = stdin();
-        for line in stdin.lock().lines() {
-            let item = line.unwrap();
-            // break item into words
-            for word in item.split_whitespace() {
-                topk.add(word.as_bytes().to_vec());
-            }
+        let stdin = io::stdin();
+        let mut stdin_lock = stdin.lock();
+        let mut buffer = String::new();
+        while stdin_lock.read_line(&mut buffer).unwrap() > 0 {
+            process_line(&buffer);
+            buffer.clear();
         }
     } else {
-        let file = std::fs::File::open(args.input.unwrap());
-        if file.is_err() {
-            eprintln!("Error: {}", file.err().unwrap());
+        let file = std::fs::File::open(args.input.unwrap()).unwrap_or_else(|e| {
+            eprintln!("Error: {}", e);
             exit(1);
-        }
-        let file = file.unwrap();
+        });
         let reader = io::BufReader::new(file);
         for line in reader.lines() {
-            let item = line.unwrap();
-            // break item into words
-            for word in item.split_whitespace() {
-                topk.add(word.as_bytes().to_vec());
-            }
+            let line = line.unwrap();
+            process_line(&line);
         }
     }
 
     for node in topk.list() {
-        println!("{} {}", String::from_utf8_lossy(&node.item), node.count);
+        println!("{} {}", node.item, node.count);
     }
 }

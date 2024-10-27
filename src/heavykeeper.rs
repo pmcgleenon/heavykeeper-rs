@@ -4,7 +4,7 @@ use std::cmp::Reverse;
 
 use priority_queue::PriorityQueue;
 use std::fmt::Debug;
-use std::hash::{Hash};
+use std::hash::Hash;
 use rand::{Rng, SeedableRng};
 use rand::rngs::SmallRng;
 
