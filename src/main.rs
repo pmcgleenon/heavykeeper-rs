@@ -35,7 +35,7 @@ fn main() {
         let mut buffer = Vec::with_capacity(1024 * 1024);
         
         while stdin_lock.read_until(b'\n', &mut buffer).unwrap() > 0 {
-            process_buffer(&buffer, &mut topk);
+            process_bytes(&buffer, &mut topk);
             buffer.clear();
         }
     } else {
@@ -49,7 +49,7 @@ fn main() {
             exit(1);
         });
 
-        process_mmap(&mmap, &mut topk);
+        process_bytes(&mmap, &mut topk);
     }
 
     for node in topk.list() {
@@ -57,54 +57,14 @@ fn main() {
     }
 }
 
-fn process_buffer(buffer: &[u8], topk: &mut TopK<String>) {
+fn process_bytes(bytes: &[u8], topk: &mut TopK<String>) {
     let mut pos = 0;
-    let len = buffer.len();
-    
-    let mut words = Vec::with_capacity(1024*1024);
-
-    while pos < len {
-        while pos < len && (buffer[pos] == b' ' || buffer[pos] == b'\n') {
-            pos += 1;
-        }
-        
-        if pos == len {
-            break;
-        }
-
-        let start = pos;
-        while pos < len && buffer[pos] != b' ' && buffer[pos] != b'\n' {
-            pos += 1;
-        }
-
-        if start < pos {
-            let mut word = String::with_capacity(pos - start);
-            unsafe {
-                word.as_mut_vec().extend_from_slice(&buffer[start..pos]);
-            }
-            words.push(word);
-            
-            if words.len() >= 1024 {
-                for word in words.drain(..) {
-                    topk.add(word);
-                }
-            }
-        }
-    }
-
-    for word in words {
-        topk.add(word);
-    }
-}
-
-fn process_mmap(mmap: &[u8], topk: &mut TopK<String>) {
-    let mut pos = 0;
-    let len = mmap.len();
+    let len = bytes.len();
     let mut words = Vec::with_capacity(1024);
 
     while pos < len {
         // Skip any whitespace
-        while pos < len && (mmap[pos] == b' ' || mmap[pos] == b'\n') {
+        while pos < len && (bytes[pos] == b' ' || bytes[pos] == b'\n') {
             pos += 1;
         }
 
@@ -114,7 +74,7 @@ fn process_mmap(mmap: &[u8], topk: &mut TopK<String>) {
 
         // Find next space using memchr
         let word_start = pos;
-        pos = if let Some(space_pos) = memchr(b' ', &mmap[pos..len]) {
+        pos = if let Some(space_pos) = memchr(b' ', &bytes[pos..len]) {
             word_start + space_pos
         } else {
             len
@@ -127,7 +87,7 @@ fn process_mmap(mmap: &[u8], topk: &mut TopK<String>) {
             let vec = word.as_mut_vec();
             vec.set_len(word_len);
             std::ptr::copy_nonoverlapping(
-                mmap.as_ptr().add(word_start),
+                bytes.as_ptr().add(word_start),
                 vec.as_mut_ptr(),
                 word_len
             );
