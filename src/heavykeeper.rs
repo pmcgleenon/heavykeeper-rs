@@ -59,11 +59,13 @@ fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Vec<u32> {
 
 impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
     pub fn new(k: usize, width: usize, depth: usize, decay: f64) -> Self {
+        Self::with_hasher(k, width, depth, decay, RandomState::new())
+    }
+
+    pub fn with_hasher(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState) -> Self {
         let decay_thresholds = precompute_decay_thresholds(decay, DECAY_LOOKUP_SIZE);
         let buckets = vec![vec![Bucket::default(); width]; depth];
-
-        let ahash_hasher = RandomState::with_seeds(0, 0, 0, 0);
-        let priority_queue : PriorityQueue<T, Reverse<u32>> = PriorityQueue::with_capacity(k);
+        let priority_queue: PriorityQueue<T, Reverse<u32>> = PriorityQueue::with_capacity(k);
 
         TopK {
             top_items: k,
@@ -73,7 +75,7 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
             decay_thresholds,
             buckets,
             priority_queue,
-            hasher: ahash_hasher,
+            hasher,
             random: SmallRng::from_entropy(),
         }
     }
@@ -110,66 +112,13 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
         }
     }
 
-    fn hash<B: Hash>(&mut self, item: B) -> u64 {
-        // let mut hasher = AHasher::default();
-        // item.hash(&mut hasher);
-        // hasher.finish()
-
-        self.hasher.hash_one(item)
-    }
-
-
-    // TODO replace this with iterator
-    pub fn list(&self) -> Vec<Node<T>> {
-        let mut nodes = self.priority_queue.iter().map(|(item, count)| Node {
-            item: item.clone(),
-            count: count.0,
-        }).collect::<Vec<_>>();
-        nodes.sort();
-        nodes
-    }
-
-    pub fn debug(&self) {
-        println!("width: {}", self.width);
-        println!("depth: {}", self.depth);
-        println!("decay: {}", self.decay);
-        println!("decay thresholds: {:?}", self.decay_thresholds);
-        let mut buckets: Vec<(&Bucket, usize, usize)> = self
-            .buckets
-            .iter()
-            .enumerate()
-            .flat_map(|(i, row)| {
-                row.iter()
-                    .enumerate()
-                    .map(move |(j, bucket)| (bucket, i, j))
-            })
-            .filter(|(bucket, _, _)| bucket.count != 0)
-            .collect();
-        buckets.sort_by(|a, b| b.0.count.cmp(&a.0.count));
-        for (bucket, i, j) in buckets {
-            println!("Bucket at row {}, column {}: {:?}", i, j, bucket);
-        }
-        println!("priority_queue: ");
-        let mut nodes = self.priority_queue.iter().map(|(item, count)| Node {
-            item: item.clone(),
-            count: count.0,
-        }).collect::<Vec<_>>();
-
-        nodes.sort();
-        for node in nodes {
-            println!("Node - Item: {:?}, Count: {}", node.item, node.count);
-        }
-    }
-
     pub fn add(&mut self, item: T) {
-        let item_fingerprint = self.hash(&item);
-
+        let item_fingerprint = self.hasher.hash_one(&item);
         let mut max_count: u32 = 0;
 
         for i in 0..self.depth {
-            // Combine item fingerprint and depth index to generate a unique bucket index
             let combined = (item_fingerprint, i);
-            let bucket_idx = self.hash(combined) % self.width as u64;
+            let bucket_idx = self.hasher.hash_one(&combined) % self.width as u64;
             let bucket_idx = bucket_idx as usize;
             let bucket = &mut self.buckets[i][bucket_idx];
 
@@ -212,6 +161,48 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
                 self.priority_queue.pop();
             }
             self.priority_queue.push(item, Reverse(max_count));
+        }
+    }
+
+    // TODO replace this with iterator
+    pub fn list(&self) -> Vec<Node<T>> {
+        let mut nodes = self.priority_queue.iter().map(|(item, count)| Node {
+            item: item.clone(),
+            count: count.0,
+        }).collect::<Vec<_>>();
+        nodes.sort();
+        nodes
+    }
+
+    pub fn debug(&self) {
+        println!("width: {}", self.width);
+        println!("depth: {}", self.depth);
+        println!("decay: {}", self.decay);
+        println!("decay thresholds: {:?}", self.decay_thresholds);
+        let mut buckets: Vec<(&Bucket, usize, usize)> = self
+            .buckets
+            .iter()
+            .enumerate()
+            .flat_map(|(i, row)| {
+                row.iter()
+                    .enumerate()
+                    .map(move |(j, bucket)| (bucket, i, j))
+            })
+            .filter(|(bucket, _, _)| bucket.count != 0)
+            .collect();
+        buckets.sort_by(|a, b| b.0.count.cmp(&a.0.count));
+        for (bucket, i, j) in buckets {
+            println!("Bucket at row {}, column {}: {:?}", i, j, bucket);
+        }
+        println!("priority_queue: ");
+        let mut nodes = self.priority_queue.iter().map(|(item, count)| Node {
+            item: item.clone(),
+            count: count.0,
+        }).collect::<Vec<_>>();
+
+        nodes.sort();
+        for node in nodes {
+            println!("Node - Item: {:?}, Count: {}", node.item, node.count);
         }
     }
 }
@@ -553,7 +544,7 @@ mod tests {
         topk.add(item);
 
         // Verify that the item has been added with an initial count of 1
-        let item_hash = topk.hash(item);
+        let item_hash = topk.hasher.hash_one(item);
         assert!(
             topk.buckets.iter().any(|row| row
                 .iter()
