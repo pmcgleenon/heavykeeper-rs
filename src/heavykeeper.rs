@@ -13,13 +13,13 @@ const DECAY_LOOKUP_SIZE: usize = 1024;
 #[derive(Default, Clone, Debug)]
 struct Bucket {
     fingerprint: u64,
-    count: u32,
+    count: u64,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Node<T> {
     pub item: T,
-    pub count: u32,
+    pub count: u64,
 }
 
 impl<T: Ord> Ord for Node<T> {
@@ -39,18 +39,18 @@ pub struct TopK<T: Ord + Clone + Hash + Debug> {
     width: usize,
     depth: usize,
     decay: f64,
-    decay_thresholds: Vec<u32>,
+    decay_thresholds: Vec<u64>,
     buckets: Vec<Vec<Bucket>>,
-    priority_queue: PriorityQueue<T, Reverse<u32>>,
+    priority_queue: PriorityQueue<T, Reverse<u64>>,
     hasher: RandomState,
     random: SmallRng,
 }
 
-fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Vec<u32> {
+fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Vec<u64> {
     let mut thresholds = Vec::with_capacity(num_entries);
     for count in 0..num_entries {
         let decay_factor = decay.powf(count as f64);
-        let threshold = (decay_factor * (1u32 << 31) as f64) as u32;
+        let threshold = (decay_factor * (1u64 << 63) as f64) as u64;
         thresholds.push(threshold);
     }
     thresholds
@@ -65,7 +65,7 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
     pub fn with_hasher(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState) -> Self {
         let decay_thresholds = precompute_decay_thresholds(decay, DECAY_LOOKUP_SIZE);
         let buckets = vec![vec![Bucket::default(); width]; depth];
-        let priority_queue: PriorityQueue<T, Reverse<u32>> = PriorityQueue::with_capacity(k);
+        let priority_queue: PriorityQueue<T, Reverse<u64>> = PriorityQueue::with_capacity(k);
 
         TopK {
             top_items: k,
@@ -84,7 +84,7 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
         self.priority_queue.get(item).is_some()
     }
 
-    pub fn count(&self, item: &T) -> u32 {
+    pub fn count(&self, item: &T) -> u64 {
         // First, check the priority queue
         if let Some(count) = self.priority_queue.get(item) {
             return count.1.0;
@@ -92,7 +92,7 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
 
         // If not in the priority queue, check the sketch
         let item_fingerprint = self.hasher.hash_one(item);
-        let mut min_count = u32::MAX;
+        let mut min_count = u64::MAX;
 
         for i in 0..self.depth {
             let combined = (item_fingerprint, i);
@@ -105,7 +105,7 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
             }
         }
 
-        if min_count == u32::MAX {
+        if min_count == u64::MAX {
             0
         } else {
             min_count
@@ -114,7 +114,7 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
 
     pub fn add(&mut self, item: T) {
         let item_fingerprint = self.hasher.hash_one(&item);
-        let mut max_count: u32 = 0;
+        let mut max_count: u64 = 0;
 
         for i in 0..self.depth {
             let combined = (item_fingerprint, i);
@@ -138,7 +138,7 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
                     self.decay_thresholds.last().cloned().unwrap_or_default()
                 };
                 // Apply bitwise decay based on the decay threshold
-                let rand = self.random.gen::<u32>();
+                let rand = self.random.gen::<u64>();
                 if rand < decay_threshold {
                     bucket.count = bucket.count.saturating_sub(1);
                 }
