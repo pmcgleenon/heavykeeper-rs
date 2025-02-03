@@ -32,7 +32,7 @@ memmap2 = "0.9.5"
 #debug = true
 
 [dev-dependencies]
-rand_distr = "0.4.3"
+rand_distr = "0.5.0"
 criterion = "0.5.1"
 zipf = "7.0.1"
 
