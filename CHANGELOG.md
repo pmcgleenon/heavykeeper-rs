@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.2.4...v0.2.5) - 2025-02-06
+
+### Other
+
+- random - dependabot upgrade
+- Update rand requirement from 0.8.5 to 0.9.0
+- Update rand_distr requirement from 0.4.3 to 0.5.0
+
 ## [0.2.4](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.2.3...v0.2.4) - 2024-11-30
 
 ### Other
