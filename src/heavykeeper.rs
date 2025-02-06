@@ -76,7 +76,7 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
             buckets,
             priority_queue,
             hasher,
-            random: SmallRng::from_entropy(),
+            random: SmallRng::from_os_rng(),
         }
     }
 
@@ -118,7 +118,7 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
 
         for i in 0..self.depth {
             let combined = (item_fingerprint, i);
-            let bucket_idx = self.hasher.hash_one(&combined) % self.width as u64;
+            let bucket_idx = self.hasher.hash_one(combined) % self.width as u64;
             let bucket_idx = bucket_idx as usize;
             let bucket = &mut self.buckets[i][bucket_idx];
 
@@ -138,7 +138,7 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
                     self.decay_thresholds.last().cloned().unwrap_or_default()
                 };
                 // Apply bitwise decay based on the decay threshold
-                let rand = self.random.gen::<u64>();
+                let rand = self.random.random::<u64>();
                 if rand < decay_threshold {
                     bucket.count = bucket.count.saturating_sub(1);
                 }
