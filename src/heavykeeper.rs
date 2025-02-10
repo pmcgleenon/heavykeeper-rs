@@ -7,6 +7,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use rand::{Rng, SeedableRng};
 use rand::rngs::SmallRng;
+use thiserror::Error;
 
 const DECAY_LOOKUP_SIZE: usize = 1024;
 
@@ -34,6 +35,33 @@ impl<T: Ord> PartialOrd for Node<T> {
     }
 }
 
+#[derive(Error, Debug)]
+pub enum HeavyKeeperError {
+    #[error("Incompatible width: self ({self_width}) != other ({other_width})")]
+    IncompatibleWidth {
+        self_width: usize,
+        other_width: usize,
+    },
+    
+    #[error("Incompatible depth: self ({self_depth}) != other ({other_depth})")]
+    IncompatibleDepth {
+        self_depth: usize,
+        other_depth: usize,
+    },
+    
+    #[error("Incompatible decay: self ({self_decay}) != other ({other_decay})")]
+    IncompatibleDecay {
+        self_decay: f64,
+        other_decay: f64,
+    },
+    
+    #[error("Incompatible top_items: self ({self_items}) != other ({other_items})")]
+    IncompatibleTopItems {
+        self_items: usize,
+        other_items: usize,
+    },
+}
+
 pub struct TopK<T: Ord + Clone + Hash + Debug> {
     top_items: usize,
     width: usize,
@@ -59,7 +87,15 @@ fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Vec<u64> {
 
 impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
     pub fn new(k: usize, width: usize, depth: usize, decay: f64) -> Self {
-        Self::with_hasher(k, width, depth, decay, RandomState::new())
+        // Use a consistent seed for default initialization
+        let seed = 12345; // Arbitrary but fixed seed
+        Self::with_seed(k, width, depth, decay, seed)
+    }
+
+    // New constructor that takes a seed
+    pub fn with_seed(k: usize, width: usize, depth: usize, decay: f64, seed: u64) -> Self {
+        let hasher = RandomState::with_seeds(seed, seed, seed, seed);
+        Self::with_hasher(k, width, depth, decay, hasher)
     }
 
     pub fn with_hasher(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState) -> Self {
@@ -204,6 +240,80 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
         for node in nodes {
             println!("Node - Item: {:?}, Count: {}", node.item, node.count);
         }
+    }
+
+    // Merge another HeavyKeeper into this one
+    pub fn merge(&mut self, other: &Self) -> Result<(), HeavyKeeperError> {
+        // Verify compatible parameters
+        if self.width != other.width {
+            return Err(HeavyKeeperError::IncompatibleWidth {
+                self_width: self.width,
+                other_width: other.width,
+            });
+        }
+        
+        if self.depth != other.depth {
+            return Err(HeavyKeeperError::IncompatibleDepth {
+                self_depth: self.depth,
+                other_depth: other.depth,
+            });
+        }
+        
+        if self.decay != other.decay {
+            return Err(HeavyKeeperError::IncompatibleDecay {
+                self_decay: self.decay,
+                other_decay: other.decay,
+            });
+        }
+
+        if self.top_items != other.top_items {
+            return Err(HeavyKeeperError::IncompatibleTopItems {
+                self_items: self.top_items,
+                other_items: other.top_items,
+            });
+        }
+
+        // Merge bucket counts
+        for (self_row, other_row) in self.buckets.iter_mut().zip(other.buckets.iter()) {
+            for (self_bucket, other_bucket) in self_row.iter_mut().zip(other_row.iter()) {
+                if self_bucket.fingerprint == other_bucket.fingerprint {
+                    // Same item, add counts
+                    self_bucket.count += other_bucket.count;
+                } else if self_bucket.count == 0 {
+                    // Empty bucket in self, copy from other
+                    *self_bucket = other_bucket.clone();
+                }
+                // If different items and self bucket not empty, keep existing item
+            }
+        }
+
+        // Merge priority queues by rebuilding from scratch
+        let mut combined_items = std::collections::HashMap::new();
+        
+        // Add items from self's priority queue
+        for (item, count) in self.priority_queue.iter() {
+            combined_items.insert(item.clone(), count.0);
+        }
+
+        // Merge items from other's priority queue
+        for (item, count) in other.priority_queue.iter() {
+            combined_items.entry(item.clone())
+                .and_modify(|e| *e += count.0)
+                .or_insert(count.0);
+        }
+
+        // Clear and rebuild priority queue
+        self.priority_queue.clear();
+        
+        // Sort by count and take top k items
+        let mut items: Vec<_> = combined_items.into_iter().collect();
+        items.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+        
+        for (item, count) in items.into_iter().take(self.top_items) {
+            self.priority_queue.push(item, Reverse(count));
+        }
+
+        Ok(())
     }
 }
 
@@ -664,5 +774,86 @@ mod tests {
 
         // This item was never added
         assert_eq!(topk.count(&"item4".as_bytes()), 5);
+    }
+
+    #[test]
+    fn test_merge_basic() {
+        let seed = 12345;
+        let mut hk1 = TopK::with_seed(3, 100, 5, 0.9, seed);
+        let mut hk2 = TopK::with_seed(3, 100, 5, 0.9, seed);
+
+        // Add items to first HeavyKeeper
+        for _ in 0..5 {
+            hk1.add("item1".as_bytes());
+        }
+        for _ in 0..3 {
+            hk1.add("item2".as_bytes());
+        }
+
+        // Add items to second HeavyKeeper
+        for _ in 0..4 {
+            hk2.add("item1".as_bytes());
+        }
+        for _ in 0..6 {
+            hk2.add("item3".as_bytes());
+        }
+
+        // Merge hk2 into hk1
+        hk1.merge(&hk2).unwrap();
+
+        // Check merged counts
+        assert_eq!(hk1.count(&"item1".as_bytes()), 9); // 5 + 4
+        assert_eq!(hk1.count(&"item2".as_bytes()), 3); // 3 + 0
+        assert_eq!(hk1.count(&"item3".as_bytes()), 6); // 0 + 6
+    }
+
+    #[test]
+    fn test_merge_incompatible_width() {
+        let mut hk1: TopK<&[u8]> = TopK::with_seed(3, 100, 5, 0.9, 12345);
+        let hk2 = TopK::with_seed(3, 50, 5, 0.9, 12345);
+
+        match hk1.merge(&hk2) {
+            Err(HeavyKeeperError::IncompatibleWidth { self_width, other_width }) => {
+                assert_eq!(self_width, 100);
+                assert_eq!(other_width, 50);
+            }
+            _ => panic!("Expected IncompatibleWidth error"),
+        }
+    }
+
+    #[test]
+    fn test_merge_incompatible_depth() {
+        let mut hk1: TopK<&[u8]> = TopK::with_seed(3, 100, 5, 0.9, 12345);
+        let hk2 = TopK::with_seed(3, 100, 4, 0.9, 12345);
+
+        match hk1.merge(&hk2) {
+            Err(HeavyKeeperError::IncompatibleDepth { self_depth, other_depth }) => {
+                assert_eq!(self_depth, 5);
+                assert_eq!(other_depth, 4);
+            }
+            _ => panic!("Expected IncompatibleDepth error"),
+        }
+    }
+
+    #[test]
+    fn test_merge_with_overlapping_items() {
+        let seed = 12345;
+        let mut hk1 = TopK::with_seed(3, 100, 5, 0.9, seed);
+        let mut hk2 = TopK::with_seed(3, 100, 5, 0.9, seed);
+
+        // Add overlapping items with different frequencies
+        for _ in 0..5 {
+            hk1.add("common".as_bytes());
+            hk2.add("common".as_bytes());
+        }
+
+        hk1.add("unique1".as_bytes());
+        hk2.add("unique2".as_bytes());
+
+        hk1.merge(&hk2).unwrap();
+
+        assert_eq!(hk1.count(&"common".as_bytes()), 10); // 5 + 5
+        assert_eq!(hk1.count(&"unique1".as_bytes()), 1);
+        assert_eq!(hk1.count(&"unique2".as_bytes()), 1);
     }
 }
