@@ -10,15 +10,14 @@ fn benchmark_topk_add(c: &mut Criterion, num_adds: usize) {
 
     let mut data = vec![];
     for _ in 0..num_adds {
-        // Generate positive values using abs() of normal distribution
         let key = (rng.sample::<f64, StandardUniform>(StandardUniform).abs() * 100_000.0) as u64;
         data.push(key);
     }
 
     let mut group = c.benchmark_group(format!("TopK_Add_{}", num_adds));
-    group.sample_size(60); // Reduce the sample count
-    group.warm_up_time(std::time::Duration::from_secs(3)); // Increase the warm-up time
-    group.measurement_time(std::time::Duration::from_secs(10)); // Increase the measurement time
+    group.sample_size(60); 
+    group.warm_up_time(std::time::Duration::from_secs(3)); 
+    group.measurement_time(std::time::Duration::from_secs(10)); 
 
     group.bench_function("Add", |b| {
         b.iter(|| {
