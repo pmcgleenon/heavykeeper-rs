@@ -1,17 +1,17 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use rand_distr::Distribution;
-use zipf::ZipfDistribution;
+use rand::prelude::*;
+use rand::distr::{Distribution, StandardUniform};
 
 use heavykeeper::TopK;
 
 fn benchmark_topk_add(c: &mut Criterion, num_adds: usize) {
-    let mut rng = rand::thread_rng();
-    let zipf = ZipfDistribution::new(100_000, 1.03).unwrap();
+    let mut rng = rand::rng();
     let mut topk = TopK::new(10, 1024, 2, 0.95);
 
     let mut data = vec![];
     for _ in 0..num_adds {
-        let key = zipf.sample(&mut rng);
+        // Generate positive values using abs() of normal distribution
+        let key = (rng.sample::<f64, StandardUniform>(StandardUniform).abs() * 100_000.0) as u64;
         data.push(key);
     }
 
