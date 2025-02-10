@@ -1,6 +1,6 @@
 [package]
 name = "heavykeeper"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 authors = [ "Patrick McGleenon"]
 description = "A library for finding the top-k elements of a stream of data."
