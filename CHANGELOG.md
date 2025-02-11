@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.2.5...v0.2.6) - 2025-02-11
+
+### Added
+
+- added merge API to merge heavykeeper structs
+
+### Other
+
+- added badges for crate, license, github status
+
 ## [0.2.5](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.2.4...v0.2.5) - 2025-02-06
 
 ### Other
