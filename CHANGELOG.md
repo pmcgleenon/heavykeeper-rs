@@ -16,8 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - added badges for crate, license, github status
-- review comments
-- updated benchmark for random dep update
 
 ## [0.2.5](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.2.4...v0.2.5) - 2025-02-06
 
