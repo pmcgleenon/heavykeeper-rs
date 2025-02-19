@@ -1,15 +1,18 @@
 # heavykeeper-rs
 
 [![Crates.io][crates-badge]][crates-url]
-[![MIT licensed][mit-badge]][mit-url]
+[![MIT / Apache 2.0 licensed][license-badge]][license-url]
 [![Build Status][actions-badge]][actions-url]
 
 [crates-badge]: https://img.shields.io/crates/v/heavykeeper.svg
 [crates-url]: https://crates.io/crates/heavykeeper
-[mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
-[mit-url]: https://github.com/pmcgleenon/heavykeeper-rs/blob/master/LICENSE
+[license-badge]: https://img.shields.io/crates/l/heavykeeper.svg
+[license-url]: https://github.com/pmcgleenon/heavykeeper-rs/blob/master/LICENSE
 [actions-badge]: https://github.com/pmcgleenon/heavykeeper-rs/actions/workflows/rust.yml/badge.svg
 [actions-url]: https://github.com/pmcgleenon/heavykeeper-rs/actions?query=workflow%3Arust+branch%3Amain
+
+
+[📖 Docs](https://docs.rs/heavykeeper)
 
 Top-K Heavykeeper algorithm for Top-K elephant flows
 
