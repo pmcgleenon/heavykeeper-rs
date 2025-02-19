@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.2.6...v0.2.7) - 2025-02-19
+
+### Other
+
+- minor tidy ups
+
 ## [0.2.6](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.2.5...v0.2.6) - 2025-02-11
 
 ### Added
