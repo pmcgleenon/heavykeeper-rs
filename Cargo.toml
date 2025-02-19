@@ -29,11 +29,10 @@ memmap2 = "0.9.5"
 thiserror = "2.0.11"
 
 [profile.release]
-#debug = true
+debug = true
 
 [dev-dependencies]
 criterion = "0.5.1"
-zipf = "7.0.1"
 
 [[bench]]
 name = "topk_add"

@@ -1,7 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::prelude::*;
-use rand::distr::{Distribution, StandardUniform};
-
+use rand::distr::StandardUniform;
 use heavykeeper::TopK;
 
 fn benchmark_topk_add(c: &mut Criterion, num_adds: usize) {
