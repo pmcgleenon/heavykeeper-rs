@@ -3,6 +3,77 @@ use memmap2::Mmap;
 use std::process::exit;
 use clap::Parser;
 use heavykeeper::TopK;
+use std::hash::{Hash, Hasher};
+use std::cmp::Ordering;
+
+const MAX_WORD_LEN: usize = 64;
+
+#[derive(Debug, Clone)]
+struct Word {
+    bytes: [u8; MAX_WORD_LEN],
+    len: u8,
+}
+
+impl Word {
+    fn new() -> Self {
+        Word {
+            bytes: [0; MAX_WORD_LEN],
+            len: 0,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    fn push(&mut self, byte: u8) {
+        if (self.len as usize) < MAX_WORD_LEN {
+            self.bytes[self.len as usize] = byte;
+            self.len += 1;
+        }
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len as usize]
+    }
+}
+
+// Only hash the actual content
+impl Hash for Word {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_slice().hash(state);
+    }
+}
+
+// Compare only the actual content
+impl PartialEq for Word {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl Eq for Word {}
+
+// Order by actual content
+impl PartialOrd for Word {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Word {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.as_slice().cmp(other.as_slice())
+    }
+}
+
+impl std::fmt::Display for Word {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Safe because we know we only store ASCII alphabetic characters
+        let s = unsafe { std::str::from_utf8_unchecked(self.as_slice()) };
+        write!(f, "{}", s)
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -26,7 +97,8 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let mut topk = TopK::<String>::new(args.k, args.width, args.depth, args.decay);
+    let mut topk = TopK::<Word>::new(args.k, args.width, args.depth, args.decay);
+    let mut word = Word::new();
 
     if args.input.is_none() {
         let stdin = io::stdin();
@@ -34,7 +106,7 @@ fn main() {
         let mut buffer = Vec::with_capacity(1024 * 1024);
         
         while stdin_lock.read_until(b'\n', &mut buffer).unwrap() > 0 {
-            process_bytes(&buffer, &mut topk);
+            process_bytes(&buffer, &mut topk, &mut word);
             buffer.clear();
         }
     } else {
@@ -48,7 +120,7 @@ fn main() {
             exit(1);
         });
 
-        process_bytes(&mmap, &mut topk);
+        process_bytes(&mmap, &mut topk, &mut word);
     }
 
     for node in topk.list() {
@@ -56,10 +128,9 @@ fn main() {
     }
 }
 
-fn process_bytes(bytes: &[u8], topk: &mut TopK<String>) {
+fn process_bytes(bytes: &[u8], topk: &mut TopK<Word>, word: &mut Word) {
     let mut pos = 0;
     let len = bytes.len();
-    let mut word = String::with_capacity(64);  // Single reusable String
 
     while pos < len {
         // Skip non-alphabetic characters
@@ -78,20 +149,17 @@ fn process_bytes(bytes: &[u8], topk: &mut TopK<String>) {
         }
 
         let word_len = pos - word_start;
-        if word_len > 0 {
-            // Clear and reuse the string
+        if word_len > 0 && word_len <= MAX_WORD_LEN {
+            // Clear and reuse the word
             word.clear();
             
-            // Reserve space if needed
-            if word.capacity() < word_len {
-                word.reserve(word_len - word.capacity());
+            // Convert to lowercase while copying
+            for &b in &bytes[word_start..pos] {
+                word.push(b.to_ascii_lowercase());
             }
-
-            // SAFETY: we know we're only dealing with ASCII alphabetic characters
-            unsafe {
-                word.as_mut_vec().extend(bytes[word_start..pos].iter().map(|&b| b.to_ascii_lowercase()));
-                topk.add(word.clone());
-            }
+            
+            // Add to TopK
+            topk.add(word.clone());
         }
     }
 }
