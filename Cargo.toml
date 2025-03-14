@@ -9,6 +9,7 @@ exclude = [".github", "/data/*" ]
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/pmcgleenon/heavykeeper-rs"
+documentation = "https://docs.rs/heavykeeper"
 rust-version = "1.78.0"
 keywords = ["heavykeeper", "top-k", "streaming", "sketch", "data-structure"]
 
