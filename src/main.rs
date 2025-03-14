@@ -3,7 +3,77 @@ use memmap2::Mmap;
 use std::process::exit;
 use clap::Parser;
 use heavykeeper::TopK;
-use memchr::memchr;
+use std::hash::{Hash, Hasher};
+use std::cmp::Ordering;
+
+const MAX_WORD_LEN: usize = 64;
+
+#[derive(Debug, Clone)]
+struct Word {
+    bytes: [u8; MAX_WORD_LEN],
+    len: u8,
+}
+
+impl Word {
+    fn new() -> Self {
+        Word {
+            bytes: [0; MAX_WORD_LEN],
+            len: 0,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    fn push(&mut self, byte: u8) {
+        if self.len < MAX_WORD_LEN as u8 {
+            self.bytes[self.len as usize] = byte;
+            self.len += 1;
+        }
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len as usize]
+    }
+}
+
+// Only hash the actual content
+impl Hash for Word {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_slice().hash(state);
+    }
+}
+
+// Compare only the actual content
+impl PartialEq for Word {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl Eq for Word {}
+
+// Order by actual content
+impl PartialOrd for Word {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Word {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.as_slice().cmp(other.as_slice())
+    }
+}
+
+impl std::fmt::Display for Word {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // we always have valid UTF-8
+        let s = unsafe { std::str::from_utf8_unchecked(self.as_slice()) };
+        write!(f, "{}", s)
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -27,7 +97,8 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let mut topk = TopK::<String>::new(args.k, args.width, args.depth, args.decay);
+    let mut topk = TopK::<Word>::new(args.k, args.width, args.depth, args.decay);
+    let mut word = Word::new();
 
     if args.input.is_none() {
         let stdin = io::stdin();
@@ -35,7 +106,7 @@ fn main() {
         let mut buffer = Vec::with_capacity(1024 * 1024);
         
         while stdin_lock.read_until(b'\n', &mut buffer).unwrap() > 0 {
-            process_bytes(&buffer, &mut topk);
+            process_bytes(&buffer, &mut topk, &mut word);
             buffer.clear();
         }
     } else {
@@ -49,7 +120,7 @@ fn main() {
             exit(1);
         });
 
-        process_bytes(&mmap, &mut topk);
+        process_bytes(&mmap, &mut topk, &mut word);
     }
 
     for node in topk.list() {
@@ -57,14 +128,13 @@ fn main() {
     }
 }
 
-fn process_bytes(bytes: &[u8], topk: &mut TopK<String>) {
+fn process_bytes(bytes: &[u8], topk: &mut TopK<Word>, word: &mut Word) {
     let mut pos = 0;
     let len = bytes.len();
-    let mut words = Vec::with_capacity(1024);
 
     while pos < len {
-        // Skip any whitespace
-        while pos < len && (bytes[pos] == b' ' || bytes[pos] == b'\n') {
+        // Skip non-alphabetic characters
+        while pos < len && !bytes[pos].is_ascii_alphabetic() {
             pos += 1;
         }
 
@@ -72,40 +142,24 @@ fn process_bytes(bytes: &[u8], topk: &mut TopK<String>) {
             break;
         }
 
-        // Find next space using memchr
+        // Find end of word
         let word_start = pos;
-        pos = if let Some(space_pos) = memchr(b' ', &bytes[pos..len]) {
-            word_start + space_pos
-        } else {
-            len
-        };
+        while pos < len && bytes[pos].is_ascii_alphabetic() {
+            pos += 1;
+        }
 
-        // Create word more efficiently
         let word_len = pos - word_start;
-        let mut word = String::with_capacity(word_len);
-        unsafe {
-            let vec = word.as_mut_vec();
-            vec.set_len(word_len);
-            std::ptr::copy_nonoverlapping(
-                bytes.as_ptr().add(word_start),
-                vec.as_mut_ptr(),
-                word_len
-            );
-        }
-        words.push(word);
-        
-        // Batch process when buffer is full
-        if words.len() >= 1024 {
-            for word in words.drain(..) {
-                topk.add(word);
+        if word_len > 0 && word_len <= MAX_WORD_LEN {
+            // Clear and reuse the word
+            word.clear();
+            
+            // Convert to lowercase while copying
+            for &b in &bytes[word_start..pos] {
+                word.push(b.to_ascii_lowercase());
             }
+            
+            // Add to TopK
+            topk.add(word.clone());
         }
-
-        pos += 1;
-    }
-
-    // Process remaining words
-    for word in words {
-        topk.add(word);
     }
 }
