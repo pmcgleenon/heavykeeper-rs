@@ -3,7 +3,6 @@ use memmap2::Mmap;
 use std::process::exit;
 use clap::Parser;
 use heavykeeper::TopK;
-use memchr::memchr;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -60,11 +59,11 @@ fn main() {
 fn process_bytes(bytes: &[u8], topk: &mut TopK<String>) {
     let mut pos = 0;
     let len = bytes.len();
-    let mut words = Vec::with_capacity(1024);
+    let mut word = String::with_capacity(64);  // Single reusable String
 
     while pos < len {
-        // Skip any whitespace
-        while pos < len && (bytes[pos] == b' ' || bytes[pos] == b'\n') {
+        // Skip non-alphabetic characters
+        while pos < len && !bytes[pos].is_ascii_alphabetic() {
             pos += 1;
         }
 
@@ -72,40 +71,27 @@ fn process_bytes(bytes: &[u8], topk: &mut TopK<String>) {
             break;
         }
 
-        // Find next space using memchr
+        // Find end of word
         let word_start = pos;
-        pos = if let Some(space_pos) = memchr(b' ', &bytes[pos..len]) {
-            word_start + space_pos
-        } else {
-            len
-        };
-
-        // Create word more efficiently
-        let word_len = pos - word_start;
-        let mut word = String::with_capacity(word_len);
-        unsafe {
-            let vec = word.as_mut_vec();
-            vec.set_len(word_len);
-            std::ptr::copy_nonoverlapping(
-                bytes.as_ptr().add(word_start),
-                vec.as_mut_ptr(),
-                word_len
-            );
+        while pos < len && bytes[pos].is_ascii_alphabetic() {
+            pos += 1;
         }
-        words.push(word);
-        
-        // Batch process when buffer is full
-        if words.len() >= 1024 {
-            for word in words.drain(..) {
-                topk.add(word);
+
+        let word_len = pos - word_start;
+        if word_len > 0 {
+            // Clear and reuse the string
+            word.clear();
+            
+            // Reserve space if needed
+            if word.capacity() < word_len {
+                word.reserve(word_len - word.capacity());
+            }
+
+            // SAFETY: we know we're only dealing with ASCII alphabetic characters
+            unsafe {
+                word.as_mut_vec().extend(bytes[word_start..pos].iter().map(|&b| b.to_ascii_lowercase()));
+                topk.add(word.clone());
             }
         }
-
-        pos += 1;
-    }
-
-    // Process remaining words
-    for word in words {
-        topk.add(word);
     }
 }
