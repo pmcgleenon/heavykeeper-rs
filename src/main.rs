@@ -56,6 +56,29 @@ fn main() {
     }
 }
 
+/// Scans a byte slice for contiguous alphabetic words, converts them to lowercase, and updates the provided TopK structure.
+///
+/// The function iterates over the input bytes, skipping any non-alphabetic characters. When it encounters a sequence of
+/// alphabetic characters, it treats them as a word, converts the word to lowercase, and adds it to the TopK instance. A
+/// single, reusable string buffer is employed to minimize memory allocations during processing.
+///
+/// # Examples
+///
+/// ```
+/// use my_crate::{process_bytes, TopK};
+///
+/// let data = b"Hello, Rust! Learn and explore Rust programming.";
+/// let mut topk = TopK::new(10, 64, 0.5);
+/// process_bytes(data, &mut topk);
+///
+/// // Assuming `TopK` tracks added words, it should now contain the following lowercase words.
+/// assert!(topk.contains("hello"));
+/// assert!(topk.contains("rust"));
+/// assert!(topk.contains("learn"));
+/// assert!(topk.contains("and"));
+/// assert!(topk.contains("explore"));
+/// assert!(topk.contains("programming"));
+/// ```
 fn process_bytes(bytes: &[u8], topk: &mut TopK<String>) {
     let mut pos = 0;
     let len = bytes.len();
