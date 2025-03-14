@@ -27,7 +27,7 @@ impl Word {
     }
 
     fn push(&mut self, byte: u8) {
-        if (self.len as usize) < MAX_WORD_LEN {
+        if self.len < MAX_WORD_LEN as u8 {
             self.bytes[self.len as usize] = byte;
             self.len += 1;
         }
@@ -69,7 +69,7 @@ impl Ord for Word {
 
 impl std::fmt::Display for Word {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Safe because we know we only store ASCII alphabetic characters
+        // we always have valid UTF-8
         let s = unsafe { std::str::from_utf8_unchecked(self.as_slice()) };
         write!(f, "{}", s)
     }
