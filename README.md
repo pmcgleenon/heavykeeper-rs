@@ -24,23 +24,23 @@ Lorna Uden, Staffordshire University; Xiaoming Li, Peking University
 
 # Example
 
-See [ip_files.rs](examples/ip_files.rs) for an example of how to use the library to 
-count the top-k IP flows in a file.
+See [examples/basic.rs](examples/basic.rs) for a complete example, or [examples/ip_files.rs](examples/ip_files.rs) for an example of counting top-k IP flows in a file.
 
-A sample usage is as follows:
-```
-    // create a new TopK
+Basic usage:
+```rust
+use heavykeeper::TopK;
 
-    let mut topk = TopK::new(k, width, depth, decay);
+// create a new TopK with k=10, width=1000, depth=4, decay=0.9
+let mut topk: TopK<Vec<u8>> = TopK::new(10, 1000, 4, 0.9);
 
-    // add some items
-    topk.add(item);
+// add some items
+topk.add(b"example item".to_vec());
+topk.add(b"another item".to_vec());
 
-    // check the counts
-    for node in topk.list() {
-        println!("{} {}", String::from_utf8_lossy(&node.item), node.count);
-    }
-
+// check the counts
+for node in topk.list() {
+    println!("{} {}", String::from_utf8_lossy(&node.item), node.count);
+}
 ```
 
 # Other Implementations
@@ -66,11 +66,29 @@ cargo build --release
 target/release/heavykeeper -k 10 -w 8192 -d 2 -y 0.95 -f data/war_and_peace.txt
 ```
 
-## Building the example 
+## Running the basic example 
 ```
-cargo build --examples --release
-target/release/examples/ip_files
+cargo run --example basic --release
 ```
+
+## Running the IPv4 example 
+```
+cargo run --example ip_files --release
+```
+
+## Run the benchmarks
+```
+cargo bench
+```
+
+## Benchmark the sample word count app
+```
+hyperfine 'target/release/heavykeeper -k 10 -w 8192 -d 2 -y 0.95 -f data/war_and_peace.txt'
+```
+
+## Test Data
+
+For information about test data format and how to obtain or generate test data, please see [data/README.md](data/README.md).
 
 # License
 This project is dual licensed under the Apache/MIT license.   
