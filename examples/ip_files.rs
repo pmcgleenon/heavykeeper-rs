@@ -1,4 +1,3 @@
-
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, BufReader};
@@ -64,7 +63,7 @@ fn read_in_traces(trace_prefix: &str, max_item_num: usize) -> io::Result<(Vec<Ve
             }
         }
 
-        println!("Finish reading {} ({} items), the dataset now has {} items", trace_file_path, count, keys.len());
+        println!("Finished reading {} ({} items), the dataset now has {} items", trace_file_path, count, keys.len());
     }
 
     Ok((keys, actual_flow_sizes))
@@ -94,24 +93,18 @@ fn main() -> io::Result<()> {
     println!("throughput: {} Mpps, each insert operation uses {} ns", throughput, 1_000.0 / throughput);
 
     for node in topk.list() {
+        // Each 13-byte record has fields in this order:
+        // - Source IP (4 bytes)
+        // - Source Port (2 bytes)
+        // - Destination IP (4 bytes)
+        // - Destination Port (2 bytes)
+        // - Protocol (1 byte)
 
-        // item is a 13 byte big-endian encoding of
-        // protocol (1byte), src_ip (4bytes), dst_ip (4bytes), src_port (2bytes), dst_port (2bytes)
-        // count is the number of times the item has been added
-        // print the decoded item and the count
-        //
-        // Each 13-byte string is a network five-tuple in the format of (srcIP, dstIP, srcPort, dstPort, protocol).
-        // For a 13-byte string "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c", the ASCII code should be:
-        //
-        // - srcIP = "\x00\x01\x02\x03"
-        // - dstIP = "\x04\x05\x06\x07"
-        // - srcPort = "\x08\x09"
-        // - dstPort = "\x0a\x0b"
-        // - protocol = "\x0c".
-
-        let src_ip = format!("{}.{}.{}.{}", node.item[0], node.item[1], node.item[2], node.item[3]);
-        let dst_ip = format!("{}.{}.{}.{}", node.item[4], node.item[5], node.item[6], node.item[7]);
-        let src_port = u16::from_be_bytes([node.item[8], node.item[9]]);
+        let src_ip = format!("{}.{}.{}.{}", 
+            node.item[0], node.item[1], node.item[2], node.item[3]);
+        let src_port = u16::from_be_bytes([node.item[4], node.item[5]]);
+        let dst_ip = format!("{}.{}.{}.{}", 
+            node.item[6], node.item[7], node.item[8], node.item[9]);
         let dst_port = u16::from_be_bytes([node.item[10], node.item[11]]);
         let protocol = node.item[12];
 
