@@ -63,7 +63,7 @@ fn read_in_traces(trace_prefix: &str, max_item_num: usize) -> io::Result<(Vec<Ve
             }
         }
 
-        println!("Finish reading {} ({} items), the dataset now has {} items", trace_file_path, count, keys.len());
+        println!("Finished reading {} ({} items), the dataset now has {} items", trace_file_path, count, keys.len());
     }
 
     Ok((keys, actual_flow_sizes))

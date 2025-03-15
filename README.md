@@ -61,28 +61,28 @@ for node in topk.list() {
 An example driver program which can be used as a word count program can be found at [`main.rs`](src/main.rs).
 
 Usage:
-```
+```bash
 cargo build --release
 target/release/heavykeeper -k 10 -w 8192 -d 2 -y 0.95 -f data/war_and_peace.txt
 ```
 
 ## Running the basic example 
-```
+```bash
 cargo run --example basic --release
 ```
 
 ## Running the IPv4 example 
-```
+```bash
 cargo run --example ip_files --release
 ```
 
 ## Run the benchmarks
-```
+```bash
 cargo bench
 ```
 
 ## Benchmark the sample word count app
-```
+```bash
 hyperfine 'target/release/heavykeeper -k 10 -w 8192 -d 2 -y 0.95 -f data/war_and_peace.txt'
 ```
 

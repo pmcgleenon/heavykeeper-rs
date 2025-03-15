@@ -11,7 +11,7 @@ python download_testdata.py
 
 This script will download CAIDA trace files (0.dat through 10.dat) that are used for testing and benchmarking the Jigsaw Sketch implementation. The files will be downloaded to the current directory.
 
-## Data Format
+## Data Description
 
 The downloaded files contain network flow data in binary format from the CAIDA dataset. Each file contains a sequence of network flow records, which are used to test and benchmark the Jigsaw Sketch's ability to identify elephant flows (high-volume network flows) in high-speed networks.
 
@@ -27,7 +27,7 @@ The data files (0.dat through 10.dat) are sourced from the CAIDA dataset and con
   - Protocol (1 byte)
 
 Example record:
-```
+```hex
 99 c1 8a e6 01 bb db 0a ab 60 9a 9a 06
 [  src_ip  ] [sp] [  dst_ip  ] [dp] [p]
 ```
