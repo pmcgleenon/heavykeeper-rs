@@ -15,11 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
-- review comments
 - added script for test data, README tidy-ups
-- word count fix ups
-- word counting app fix
-- minor tidy ups
 
 ## [0.2.6](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.2.5...v0.2.6) - 2025-02-11
 
