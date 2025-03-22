@@ -1,6 +1,4 @@
-//! HeavyKeeper is a library for finding the Top N frequently occuring objects in a stream of data
-//!
-//! Top-K Heavykeeper algorithm for Top-K elephant flows
+//! HeavyKeeper is for finding Top-K elephant flows with high precision and low memory footprint
 //!
 //! This implementation is based on the paper HeavyKeeper: An Accurate Algorithm for Finding Top-k Elephant Flows
 //! by Junzhi Gong, Tong Yang, Haowei Zhang, and Hao Li, Peking University; Steve Uhlig, Queen Mary, University of London;
