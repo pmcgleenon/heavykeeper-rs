@@ -6,5 +6,6 @@
 
 
 mod heavykeeper;
+pub use heavykeeper::TopK;
 
-pub use self::heavykeeper::*;
+mod priority_queue;

@@ -1,13 +1,11 @@
 use ahash::RandomState;
 use std::clone::Clone;
-use std::cmp::Reverse;
-
-use priority_queue::PriorityQueue;
 use std::fmt::Debug;
 use std::hash::Hash;
 use rand::{Rng, SeedableRng};
 use rand::rngs::SmallRng;
 use thiserror::Error;
+use crate::priority_queue::TopKQueue;
 
 const DECAY_LOOKUP_SIZE: usize = 1024;
 
@@ -35,6 +33,7 @@ impl<T: Ord> PartialOrd for Node<T> {
     }
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug)]
 pub enum HeavyKeeperError {
     #[error("Incompatible width: self ({self_width}) != other ({other_width})")]
@@ -69,7 +68,7 @@ pub struct TopK<T: Ord + Clone + Hash + Debug> {
     decay: f64,
     decay_thresholds: Vec<u64>,
     buckets: Vec<Vec<Bucket>>,
-    priority_queue: PriorityQueue<T, Reverse<u64>>,
+    priority_queue: TopKQueue<T>,
     hasher: RandomState,
     random: SmallRng,
 }
@@ -99,31 +98,52 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
     }
 
     pub fn with_hasher(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState) -> Self {
-        let decay_thresholds = precompute_decay_thresholds(decay, DECAY_LOOKUP_SIZE);
-        let buckets = vec![vec![Bucket::default(); width]; depth];
-        let priority_queue: PriorityQueue<T, Reverse<u64>> = PriorityQueue::with_capacity(k);
+        // Pre-allocate with capacity to avoid resizing
+        let mut buckets = Vec::with_capacity(depth);
+        for _ in 0..depth {
+            buckets.push(vec![Bucket { fingerprint: 0, count: 0 }; width]);
+        }
 
-        TopK {
+        Self {
             top_items: k,
             width,
             depth,
             decay,
-            decay_thresholds,
+            decay_thresholds: precompute_decay_thresholds(decay, DECAY_LOOKUP_SIZE),
             buckets,
-            priority_queue,
+            priority_queue: TopKQueue::with_capacity_and_hasher(k, hasher.clone()),
             hasher,
-            random: SmallRng::from_os_rng(),
+            random: SmallRng::seed_from_u64(0),
         }
     }
 
     pub fn query(&self, item: &T) -> bool {
-        self.priority_queue.get(item).is_some()
+        // Check if item exists in priority queue
+        if self.priority_queue.get(item).is_some() {
+            return true;
+        }
+
+        let item_fingerprint = self.hasher.hash_one(item);
+        let mut min_count = u64::MAX;
+
+        for i in 0..self.depth {
+            let combined = (item_fingerprint, i);
+            let bucket_idx = self.hasher.hash_one(combined) % self.width as u64;
+            let bucket_idx = bucket_idx as usize;
+            let bucket = &self.buckets[i][bucket_idx];
+
+            if bucket.fingerprint == item_fingerprint {
+                min_count = min_count.min(bucket.count);
+            }
+        }
+
+        min_count != u64::MAX
     }
 
     pub fn count(&self, item: &T) -> u64 {
         // First, check the priority queue
         if let Some(count) = self.priority_queue.get(item) {
-            return count.1.0;
+            return count;
         }
 
         // If not in the priority queue, check the sketch
@@ -181,30 +201,22 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
             }
         }
 
-        let space_in_heap = self.priority_queue.len() < self.top_items;
-        let curr_min = self.priority_queue.peek().map_or(0, |v| v.1 .0);
-        // skip if max_count is less than the smallest count in the min-heap
-        if max_count < curr_min && !space_in_heap {
-            return;
-        }
-
-        let new_max = max_count >= curr_min;
-
-        if self.priority_queue.get(&item).is_some() {
-            self.priority_queue.change_priority(&item, Reverse(max_count));
-        }  else if space_in_heap || new_max {
-            if self.priority_queue.len() >= self.top_items {
-                self.priority_queue.pop();
+        // First check if queue is full - this is a cheap O(1) operation
+        if self.priority_queue.is_full() {
+            // Only check min_count if queue is full
+            if max_count < self.priority_queue.min_count() {
+                return;
             }
-            self.priority_queue.push(item, Reverse(max_count));
         }
+
+        self.priority_queue.upsert(item, max_count);
     }
 
     // TODO replace this with iterator
     pub fn list(&self) -> Vec<Node<T>> {
         let mut nodes = self.priority_queue.iter().map(|(item, count)| Node {
             item: item.clone(),
-            count: count.0,
+            count,
         }).collect::<Vec<_>>();
         nodes.sort();
         nodes
@@ -233,7 +245,7 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
         println!("priority_queue: ");
         let mut nodes = self.priority_queue.iter().map(|(item, count)| Node {
             item: item.clone(),
-            count: count.0,
+            count,
         }).collect::<Vec<_>>();
 
         nodes.sort();
@@ -287,30 +299,10 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
             }
         }
 
-        // Merge priority queues by rebuilding from scratch
-        let mut combined_items = std::collections::HashMap::new();
-        
-        // Add items from self's priority queue
-        for (item, count) in self.priority_queue.iter() {
-            combined_items.insert(item.clone(), count.0);
-        }
-
-        // Merge items from other's priority queue
+        // Merge priority queues
         for (item, count) in other.priority_queue.iter() {
-            combined_items.entry(item.clone())
-                .and_modify(|e| *e += count.0)
-                .or_insert(count.0);
-        }
-
-        // Clear and rebuild priority queue
-        self.priority_queue.clear();
-        
-        // Sort by count and take top k items
-        let mut items: Vec<_> = combined_items.into_iter().collect();
-        items.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-        
-        for (item, count) in items.into_iter().take(self.top_items) {
-            self.priority_queue.push(item, Reverse(count));
+            let self_count = self.priority_queue.get(item).unwrap_or(0);
+            self.priority_queue.upsert(item.clone(), self_count + count);
         }
 
         Ok(())
@@ -318,7 +310,6 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
 }
 
 #[cfg(test)]
-
 mod tests {
     use super::*;
 
@@ -340,11 +331,7 @@ mod tests {
 
     #[test]
     fn test_query() {
-        let k = 10;
-        let width = 100;
-        let depth = 5;
-        let decay = 0.9;
-        let mut topk = TopK::new(k, width, depth, decay);
+        let mut topk: TopK<&[u8]> = TopK::new(10, 100, 5, 0.9);
         topk.add("hello".as_bytes());
 
         assert!(topk.query(&"hello".as_bytes()));
@@ -412,7 +399,7 @@ mod tests {
 
         let nodes = topk.priority_queue.iter().map(|(item, count)| Node {
             item: *item,
-            count: count.0,
+            count,
         }).collect::<Vec<_>>();
 
         assert_eq!(nodes.len(), 2); // Assertion for nodes length
@@ -518,8 +505,8 @@ mod tests {
         // Verify the min-heap contains the correct top-k items based on frequency
         // The top-k items should be the last k items added due to their higher frequencies
         let top_items = topk.priority_queue.iter().map(|(item, count)| Node {
-            item: std::str::from_utf8(item).unwrap().to_string(), // Convert byte array back to string
-            count: count.0,
+            item: std::str::from_utf8(item).unwrap().to_string(),
+            count,
         }).collect::<Vec<_>>();
 
         let expected_top_items = (90..100).map(|i| format!("item{}", i)).collect::<Vec<_>>();
@@ -729,8 +716,8 @@ mod tests {
 
         // Verify the min-heap contains the correct top-k items based on frequency
         let top_items = topk.priority_queue.iter().map(|(item, count)| Node {
-            item: std::str::from_utf8(item).unwrap().to_string(), // Convert byte array back to string
-            count: count.0,
+            item: std::str::from_utf8(item).unwrap().to_string(),
+            count,
         }).collect::<Vec<_>>();
 
         let expected_top_items = (1..3).map(|i| format!("item{}", i)).collect::<Vec<_>>();
@@ -817,7 +804,7 @@ mod tests {
                 assert_eq!(self_width, 100);
                 assert_eq!(other_width, 50);
             }
-            _ => panic!("Expected IncompatibleWidth error"),
+            _ => panic!("Expected Width error"),
         }
     }
 
@@ -831,7 +818,7 @@ mod tests {
                 assert_eq!(self_depth, 5);
                 assert_eq!(other_depth, 4);
             }
-            _ => panic!("Expected IncompatibleDepth error"),
+            _ => panic!("Expected Depth error"),
         }
     }
 
