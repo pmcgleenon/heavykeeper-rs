@@ -6,6 +6,7 @@ use rand::{Rng, SeedableRng};
 use rand::rngs::SmallRng;
 use thiserror::Error;
 use crate::priority_queue::TopKQueue;
+use crate::hash_composition::HashComposer;
 
 const DECAY_LOOKUP_SIZE: usize = 1024;
 
@@ -118,21 +119,18 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
     }
 
     pub fn query(&self, item: &T) -> bool {
-        // Check if item exists in priority queue
         if self.priority_queue.get(item).is_some() {
             return true;
         }
 
-        let item_fingerprint = self.hasher.hash_one(item);
+        let mut composer = HashComposer::new(&self.hasher, item);
         let mut min_count = u64::MAX;
 
         for i in 0..self.depth {
-            let combined = (item_fingerprint, i);
-            let bucket_idx = self.hasher.hash_one(combined) % self.width as u64;
-            let bucket_idx = bucket_idx as usize;
+            let bucket_idx = composer.next_bucket(self.width as u64, i);
             let bucket = &self.buckets[i][bucket_idx];
 
-            if bucket.fingerprint == item_fingerprint {
+            if bucket.fingerprint == composer.fingerprint() {
                 min_count = min_count.min(bucket.count);
             }
         }
@@ -141,22 +139,18 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
     }
 
     pub fn count(&self, item: &T) -> u64 {
-        // First, check the priority queue
         if let Some(count) = self.priority_queue.get(item) {
             return count;
         }
 
-        // If not in the priority queue, check the sketch
-        let item_fingerprint = self.hasher.hash_one(item);
+        let mut composer = HashComposer::new(&self.hasher, item);
         let mut min_count = u64::MAX;
 
         for i in 0..self.depth {
-            let combined = (item_fingerprint, i);
-            let bucket_idx = self.hasher.hash_one(combined) % self.width as u64;
-            let bucket_idx = bucket_idx as usize;
+            let bucket_idx = composer.next_bucket(self.width as u64, i);
             let bucket = &self.buckets[i][bucket_idx];
 
-            if bucket.fingerprint == item_fingerprint {
+            if bucket.fingerprint == composer.fingerprint() {
                 min_count = min_count.min(bucket.count);
             }
         }
@@ -169,31 +163,27 @@ impl<T: Ord + Clone  + Hash + Debug> TopK<T> {
     }
 
     pub fn add(&mut self, item: T) {
-        let item_fingerprint = self.hasher.hash_one(&item);
+        let mut composer = HashComposer::new(&self.hasher, &item);
         let mut max_count: u64 = 0;
 
         for i in 0..self.depth {
-            let combined = (item_fingerprint, i);
-            let bucket_idx = self.hasher.hash_one(combined) % self.width as u64;
-            let bucket_idx = bucket_idx as usize;
+            let bucket_idx = composer.next_bucket(self.width as u64, i);
             let bucket = &mut self.buckets[i][bucket_idx];
 
-            let matches = bucket.fingerprint == item_fingerprint;
-            let empty = bucket.count == 0;
-
+            let matches = bucket.fingerprint == composer.fingerprint();
+            let empty = bucket.count == 0u64;
+            
             if matches || empty {
-                bucket.fingerprint = item_fingerprint;
+                bucket.fingerprint = composer.fingerprint();
                 bucket.count += 1;
                 max_count = std::cmp::max(max_count, bucket.count);
-            }
-            else {
-                // Use the precomputed decay threshold based on the bucket count
-                let decay_threshold = if (bucket.count as usize) < self.decay_thresholds.len() {
-                    self.decay_thresholds[bucket.count as usize]
+            } else {
+                let count_idx = bucket.count as usize;
+                let decay_threshold = if count_idx < self.decay_thresholds.len() {
+                    self.decay_thresholds[count_idx]
                 } else {
                     self.decay_thresholds.last().cloned().unwrap_or_default()
                 };
-                // Apply bitwise decay based on the decay threshold
                 let rand = self.random.random::<u64>();
                 if rand < decay_threshold {
                     bucket.count = bucket.count.saturating_sub(1);

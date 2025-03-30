@@ -9,3 +9,4 @@ mod heavykeeper;
 pub use heavykeeper::TopK;
 
 mod priority_queue;
+mod hash_composition;
