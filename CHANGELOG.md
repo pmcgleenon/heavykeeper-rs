@@ -14,10 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - try hash composition instead of recalculating new hash
 - replaced external priority queue with internal implementation
 
-### Other
-
-- updated cargo description
-- review comment - removed test
 
 ## [0.2.7](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.2.6...v0.2.7) - 2025-03-15
 
