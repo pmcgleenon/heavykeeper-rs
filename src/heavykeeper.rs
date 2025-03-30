@@ -843,11 +843,4 @@ mod tests {
         assert_eq!(hk1.count(&"unique1".as_bytes()), 1);
         assert_eq!(hk1.count(&"unique2".as_bytes()), 1);
     }
-
-    #[test]
-    fn test_add_bytes() {
-        let mut topk: TopK<&[u8]> = TopK::new(10, 100, 5, 0.9);
-        topk.add("hello".as_bytes());
-        // ...
-    }
 }
