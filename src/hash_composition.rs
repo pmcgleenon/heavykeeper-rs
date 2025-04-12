@@ -1,4 +1,4 @@
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::hash::{BuildHasher, Hash};
 
 /// Generates initial hashes and provides methods for hash composition
 pub(crate) struct HashComposer {
@@ -11,9 +11,7 @@ impl HashComposer {
     /// Creates a new HashComposer from a value using the provided hasher
     #[inline]
     pub fn new<T: Hash, S: BuildHasher>(hasher: &S, value: &T) -> Self {
-        let mut state = hasher.build_hasher();
-        value.hash(&mut state);
-        let h1 = state.finish();
+        let h1 = hasher.hash_one(value);
         let h2 = h1.wrapping_shr(32).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
 
         Self {
