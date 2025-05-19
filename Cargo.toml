@@ -31,7 +31,7 @@ thiserror = "2.0.11"
 debug = true
 
 [dev-dependencies]
-criterion = "0.5.1"
+criterion = "0.6.0"
 
 [[bench]]
 name = "topk_add"
