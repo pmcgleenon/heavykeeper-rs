@@ -11,14 +11,14 @@ fn main() {
 
     // Add some example items multiple times to show frequency counting
     for _ in 0..5 {
-        topk.add(b"frequent item".to_vec());
+        topk.add(&b"frequent item".to_vec());
     }
     
     for _ in 0..3 {
-        topk.add(b"less frequent item".to_vec());
+        topk.add(&b"less frequent item".to_vec());
     }
     
-    topk.add(b"rare item".to_vec());
+    topk.add(&b"rare item".to_vec());
 
     // Print the items and their counts in order of frequency
     println!("Top items and their frequencies:");
