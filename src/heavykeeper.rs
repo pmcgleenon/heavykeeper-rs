@@ -170,7 +170,7 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         }
     }
 
-    pub fn add(&mut self, item: &T) {
+    pub fn add_incr(&mut self, item: &T, incr: u64) {
         let mut composer = HashComposer::new(&self.hasher, item);
         let mut max_count: u64 = 0;
 
@@ -183,7 +183,7 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
 
             if matches || empty {
                 bucket.fingerprint = composer.fingerprint();
-                bucket.count += 1;
+                bucket.count += incr;
                 max_count = std::cmp::max(max_count, bucket.count);
             } else {
                 let count_idx = bucket.count as usize;
@@ -209,6 +209,10 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
 
         // Clone the item here since we need to store it in the priority queue
         self.priority_queue.upsert(item.clone(), max_count);
+    }
+
+    pub fn add(&mut self, item: &T) {
+        self.add_incr(item, 1)
     }
 
     pub fn list(&self) -> Vec<Node<T>> {
@@ -448,6 +452,25 @@ mod tests {
         let nodes = topk.list();
         assert_eq!(nodes.len(), 1, "Should have exactly one item");
         assert_eq!(nodes[0].count, 1, "Count should be 1");
+        assert_eq!(nodes[0].item, item, "Item should match");
+    }
+
+    /// Tests adding a single item with custom increment
+    #[test]
+    fn test_add_incr_single_item() {
+        let k = 1;
+        let width = 100;
+        let depth = 5;
+        let decay = 0.9;
+        let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
+
+        let item = b"hello".to_vec();
+        topk.add_incr(&item, 1024);
+        topk.add_incr(&item, 5);
+
+        let nodes = topk.list();
+        assert_eq!(nodes.len(), 1, "Should have exactly one item");
+        assert_eq!(nodes[0].count, 1024 + 5, "Invalid count");
         assert_eq!(nodes[0].item, item, "Item should match");
     }
 
