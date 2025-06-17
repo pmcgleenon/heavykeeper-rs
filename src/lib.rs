@@ -4,9 +4,8 @@
 //! by Junzhi Gong, Tong Yang, Haowei Zhang, and Hao Li, Peking University; Steve Uhlig, Queen Mary, University of London;
 //! Shigang Chen, University of Florida; Lorna Uden, Staffordshire University; Xiaoming Li, Peking University
 
-
 mod heavykeeper;
 pub use heavykeeper::TopK;
 
-mod priority_queue;
 mod hash_composition;
+mod priority_queue;

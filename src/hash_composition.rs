@@ -35,4 +35,4 @@ impl HashComposer {
         }
         (self.h1 % width) as usize
     }
-} 
+}
