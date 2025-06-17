@@ -6,6 +6,8 @@ use std::time::Instant;
 
 const KEY_SIZE: usize = 13;
 
+#[allow(clippy::type_complexity)]
+#[allow(dead_code)]
 fn read_in_trace(
     trace_prefix: &str,
     max_item_num: usize,
@@ -49,6 +51,7 @@ fn read_in_trace(
     Ok((keys, actual_flow_sizes))
 }
 
+#[allow(clippy::type_complexity)]
 fn read_in_traces(
     trace_prefix: &str,
     max_item_num: usize,

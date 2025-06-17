@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use heavykeeper::TopK;
 use rand::distr::StandardUniform;
