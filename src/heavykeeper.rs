@@ -186,15 +186,27 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
                 bucket.count += incr;
                 max_count = std::cmp::max(max_count, bucket.count);
             } else {
-                let count_idx = bucket.count as usize;
-                let decay_threshold = if count_idx < self.decay_thresholds.len() {
-                    self.decay_thresholds[count_idx]
-                } else {
-                    self.decay_thresholds.last().cloned().unwrap_or_default()
-                };
-                let rand = self.random.random::<u64>();
-                if rand < decay_threshold {
-                    bucket.count = bucket.count.saturating_sub(1);
+                let mut remaining_incr = incr;
+                while remaining_incr > 0 {
+                    let count_idx = bucket.count as usize;
+                    let decay_threshold = if count_idx < self.decay_thresholds.len() {
+                        self.decay_thresholds[count_idx]
+                    } else {
+                        self.decay_thresholds.last().cloned().unwrap_or_default()
+                    };
+                    let rand = self.random.random::<u64>();
+                    if rand < decay_threshold {
+                        bucket.count = bucket.count.saturating_sub(1);
+
+                        if bucket.count == 0 {
+                            bucket.fingerprint = composer.fingerprint();
+                            bucket.count = remaining_incr;
+                            max_count = std::cmp::max(max_count, bucket.count);
+                            break;
+                        }
+                    }
+
+                    remaining_incr -= 1;
                 }
             }
         }
@@ -472,6 +484,31 @@ mod tests {
         assert_eq!(nodes.len(), 1, "Should have exactly one item");
         assert_eq!(nodes[0].count, 1024 + 5, "Invalid count");
         assert_eq!(nodes[0].item, item, "Item should match");
+    }
+
+    /// Tests adding a an item and overwriting it with another
+    #[test]
+    fn test_add_incr_fixed_decay() {
+        let k = 1;
+        let width = 1;
+        let depth = 1;
+        let decay = 1.0;
+        let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
+
+        // override the decay thresholds so we always decay
+        // this removes the probabilistic aspect of decay
+        topk.decay_thresholds.iter_mut().for_each(|v| *v = u64::MAX);
+
+        let item = b"item1".to_vec();
+        topk.add_incr(&item, 1000);
+
+        let item2 = b"item2".to_vec();
+        topk.add_incr(&item2, 3000);
+
+        let nodes = topk.list();
+        assert_eq!(nodes.len(), 1, "Should have exactly one item");
+        assert_eq!(nodes[0].count, 2001, "Invalid count");
+        assert_eq!(nodes[0].item, item2, "Item should match");
     }
 
     /// Tests adding duplicate items and verifying their counts
