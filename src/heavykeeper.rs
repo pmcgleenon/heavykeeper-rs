@@ -1,12 +1,12 @@
+use crate::hash_composition::HashComposer;
+use crate::priority_queue::TopKQueue;
 use ahash::RandomState;
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
 use std::clone::Clone;
 use std::fmt::Debug;
 use std::hash::Hash;
-use rand::{Rng, SeedableRng};
-use rand::rngs::SmallRng;
 use thiserror::Error;
-use crate::priority_queue::TopKQueue;
-use crate::hash_composition::HashComposer;
 
 const DECAY_LOOKUP_SIZE: usize = 1024;
 
@@ -42,19 +42,16 @@ pub enum HeavyKeeperError {
         self_width: usize,
         other_width: usize,
     },
-    
+
     #[error("Incompatible depth: self ({self_depth}) != other ({other_depth})")]
     IncompatibleDepth {
         self_depth: usize,
         other_depth: usize,
     },
-    
+
     #[error("Incompatible decay: self ({self_decay}) != other ({other_decay})")]
-    IncompatibleDecay {
-        self_decay: f64,
-        other_decay: f64,
-    },
-    
+    IncompatibleDecay { self_decay: f64, other_decay: f64 },
+
     #[error("Incompatible top_items: self ({self_items}) != other ({other_items})")]
     IncompatibleTopItems {
         self_items: usize,
@@ -97,11 +94,23 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         Self::with_hasher(k, width, depth, decay, hasher)
     }
 
-    pub fn with_hasher(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState) -> Self {
+    pub fn with_hasher(
+        k: usize,
+        width: usize,
+        depth: usize,
+        decay: f64,
+        hasher: RandomState,
+    ) -> Self {
         // Pre-allocate with capacity to avoid resizing
         let mut buckets = Vec::with_capacity(depth);
         for _ in 0..depth {
-            buckets.push(vec![Bucket { fingerprint: 0, count: 0 }; width]);
+            buckets.push(vec![
+                Bucket {
+                    fingerprint: 0,
+                    count: 0
+                };
+                width
+            ]);
         }
 
         Self {
@@ -171,7 +180,7 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
 
             let matches = bucket.fingerprint == composer.fingerprint();
             let empty = bucket.count == 0u64;
-            
+
             if matches || empty {
                 bucket.fingerprint = composer.fingerprint();
                 bucket.count += 1;
@@ -203,10 +212,14 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
     }
 
     pub fn list(&self) -> Vec<Node<T>> {
-        let mut nodes = self.priority_queue.iter().map(|(item, count)| Node {
-            item: item.clone(),
-            count,
-        }).collect::<Vec<_>>();
+        let mut nodes = self
+            .priority_queue
+            .iter()
+            .map(|(item, count)| Node {
+                item: item.clone(),
+                count,
+            })
+            .collect::<Vec<_>>();
         nodes.sort();
         nodes
     }
@@ -232,10 +245,14 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
             println!("Bucket at row {}, column {}: {:?}", i, j, bucket);
         }
         println!("priority_queue: ");
-        let mut nodes = self.priority_queue.iter().map(|(item, count)| Node {
-            item: item.clone(),
-            count,
-        }).collect::<Vec<_>>();
+        let mut nodes = self
+            .priority_queue
+            .iter()
+            .map(|(item, count)| Node {
+                item: item.clone(),
+                count,
+            })
+            .collect::<Vec<_>>();
 
         nodes.sort();
         for node in nodes {
@@ -252,14 +269,14 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
                 other_width: other.width,
             });
         }
-        
+
         if self.depth != other.depth {
             return Err(HeavyKeeperError::IncompatibleDepth {
                 self_depth: self.depth,
                 other_depth: other.depth,
             });
         }
-        
+
         if self.decay != other.decay {
             return Err(HeavyKeeperError::IncompatibleDecay {
                 self_decay: self.decay,
@@ -351,23 +368,35 @@ mod tests {
         for _ in 0..8 {
             topk.add(&item1);
         }
-        assert_eq!(topk.count(&item1), 8, "Count should match number of additions");
+        assert_eq!(
+            topk.count(&item1),
+            8,
+            "Count should match number of additions"
+        );
 
         // Verify count for non-existent item
-        assert_eq!(topk.count(&item3), 0, "Non-existent item should have count 0");
+        assert_eq!(
+            topk.count(&item3),
+            0,
+            "Non-existent item should have count 0"
+        );
 
         // Add second item many times
         for _ in 0..1337 {
             topk.add(&item2);
         }
-        assert_eq!(topk.count(&item2), 1337, "Count should match number of additions");
+        assert_eq!(
+            topk.count(&item2),
+            1337,
+            "Count should match number of additions"
+        );
     }
 
     /// Tests support for non-ASCII characters and emoji
     #[test]
     fn test_non_ascii_and_emoji() {
         let mut topk: TopK<Vec<u8>> = TopK::new(5, 100, 4, 0.9);
-        
+
         // Test with Hindi text
         let p = "पुष्पं अस्ति।".as_bytes().to_vec();
         // Test with emoji
@@ -443,10 +472,14 @@ mod tests {
 
         assert_eq!(topk.priority_queue.len(), k, "Should have exactly k items");
 
-        let nodes = topk.priority_queue.iter().map(|(item, count)| Node {
-            item: item.clone(),
-            count,
-        }).collect::<Vec<_>>();
+        let nodes = topk
+            .priority_queue
+            .iter()
+            .map(|(item, count)| Node {
+                item: item.clone(),
+                count,
+            })
+            .collect::<Vec<_>>();
 
         assert_eq!(nodes.len(), 2, "Should have exactly two items");
         assert_eq!(nodes[0].count, 7, "First item should have count 7");
@@ -559,12 +592,18 @@ mod tests {
         );
 
         // Verify the top-k items are correct
-        let top_items = topk.priority_queue.iter().map(|(item, count)| Node {
-            item: std::str::from_utf8(item).unwrap().to_string().into_bytes(),
-            count,
-        }).collect::<Vec<_>>();
+        let top_items = topk
+            .priority_queue
+            .iter()
+            .map(|(item, count)| Node {
+                item: std::str::from_utf8(item).unwrap().to_string().into_bytes(),
+                count,
+            })
+            .collect::<Vec<_>>();
 
-        let expected_top_items = (90..100).map(|i| format!("item{}", i).into_bytes()).collect::<Vec<_>>();
+        let expected_top_items = (90..100)
+            .map(|i| format!("item{}", i).into_bytes())
+            .collect::<Vec<_>>();
 
         for expected_item in expected_top_items.iter() {
             assert!(
@@ -593,7 +632,11 @@ mod tests {
             topk.add(&item);
         }
 
-        assert_eq!(topk.count(&item), num_additions, "Count should match number of additions");
+        assert_eq!(
+            topk.count(&item),
+            num_additions,
+            "Count should match number of additions"
+        );
     }
 
     /// Tests behavior with multiple distinct items
@@ -691,8 +734,7 @@ mod tests {
         // Verify all items have the same frequency
         for node in topk.list() {
             assert_eq!(
-                node.count,
-                frequency,
+                node.count, frequency,
                 "All items should have the same frequency"
             );
         }
@@ -725,12 +767,18 @@ mod tests {
         );
 
         // Verify top-k items
-        let top_items = topk.priority_queue.iter().map(|(item, count)| Node {
-            item: std::str::from_utf8(item).unwrap().to_string().into_bytes(),
-            count,
-        }).collect::<Vec<_>>();
+        let top_items = topk
+            .priority_queue
+            .iter()
+            .map(|(item, count)| Node {
+                item: std::str::from_utf8(item).unwrap().to_string().into_bytes(),
+                count,
+            })
+            .collect::<Vec<_>>();
 
-        let expected_top_items = (1..3).map(|i| format!("item{}", i).into_bytes()).collect::<Vec<_>>();
+        let expected_top_items = (1..3)
+            .map(|i| format!("item{}", i).into_bytes())
+            .collect::<Vec<_>>();
 
         for expected_item in expected_top_items.iter() {
             assert!(
@@ -781,11 +829,7 @@ mod tests {
         let mut hk1 = TopK::with_seed(3, 100, 5, 0.9, seed);
         let mut hk2 = TopK::with_seed(3, 100, 5, 0.9, seed);
 
-        let items = [
-            b"item1".to_vec(),
-            b"item2".to_vec(),
-            b"item3".to_vec(),
-        ];
+        let items = [b"item1".to_vec(), b"item2".to_vec(), b"item3".to_vec()];
 
         // Add items to first instance
         for _ in 0..5 {
@@ -805,7 +849,11 @@ mod tests {
 
         // Merge and verify counts
         hk1.merge(&hk2).unwrap();
-        assert_eq!(hk1.count(&items[0]), 9, "Count should be sum of both instances");
+        assert_eq!(
+            hk1.count(&items[0]),
+            9,
+            "Count should be sum of both instances"
+        );
         assert_eq!(hk1.count(&items[1]), 3, "Count should be preserved");
         assert_eq!(hk1.count(&items[2]), 6, "Count should be preserved");
     }
@@ -817,7 +865,10 @@ mod tests {
         let hk2 = TopK::with_seed(3, 50, 5, 0.9, 12345);
 
         match hk1.merge(&hk2) {
-            Err(HeavyKeeperError::IncompatibleWidth { self_width, other_width }) => {
+            Err(HeavyKeeperError::IncompatibleWidth {
+                self_width,
+                other_width,
+            }) => {
                 assert_eq!(self_width, 100, "Self width should be 100");
                 assert_eq!(other_width, 50, "Other width should be 50");
             }
@@ -832,7 +883,10 @@ mod tests {
         let hk2 = TopK::with_seed(3, 100, 4, 0.9, 12345);
 
         match hk1.merge(&hk2) {
-            Err(HeavyKeeperError::IncompatibleDepth { self_depth, other_depth }) => {
+            Err(HeavyKeeperError::IncompatibleDepth {
+                self_depth,
+                other_depth,
+            }) => {
                 assert_eq!(self_depth, 5, "Self depth should be 5");
                 assert_eq!(other_depth, 4, "Other depth should be 4");
             }
@@ -847,11 +901,7 @@ mod tests {
         let mut hk1 = TopK::with_seed(3, 100, 5, 0.9, seed);
         let mut hk2 = TopK::with_seed(3, 100, 5, 0.9, seed);
 
-        let items = [
-            b"common".to_vec(),
-            b"unique1".to_vec(),
-            b"unique2".to_vec(),
-        ];
+        let items = [b"common".to_vec(), b"unique1".to_vec(), b"unique2".to_vec()];
 
         // Add overlapping items
         for _ in 0..5 {
@@ -864,8 +914,20 @@ mod tests {
 
         // Merge and verify counts
         hk1.merge(&hk2).unwrap();
-        assert_eq!(hk1.count(&items[0]), 10, "Common item count should be doubled");
-        assert_eq!(hk1.count(&items[1]), 1, "Unique item count should be preserved");
-        assert_eq!(hk1.count(&items[2]), 1, "Unique item count should be preserved");
+        assert_eq!(
+            hk1.count(&items[0]),
+            10,
+            "Common item count should be doubled"
+        );
+        assert_eq!(
+            hk1.count(&items[1]),
+            1,
+            "Unique item count should be preserved"
+        );
+        assert_eq!(
+            hk1.count(&items[2]),
+            1,
+            "Unique item count should be preserved"
+        );
     }
 }

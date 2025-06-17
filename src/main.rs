@@ -1,10 +1,10 @@
-use std::io::{self, BufRead};
-use memmap2::Mmap;
-use std::process::exit;
 use clap::Parser;
 use heavykeeper::TopK;
-use std::hash::{Hash, Hasher};
+use memmap2::Mmap;
 use std::cmp::Ordering;
+use std::hash::{Hash, Hasher};
+use std::io::{self, BufRead};
+use std::process::exit;
 
 const MAX_WORD_LEN: usize = 64;
 
@@ -104,7 +104,7 @@ fn main() {
         let stdin = io::stdin();
         let mut stdin_lock = stdin.lock();
         let mut buffer = Vec::with_capacity(1024 * 1024);
-        
+
         while stdin_lock.read_until(b'\n', &mut buffer).unwrap() > 0 {
             process_bytes(&buffer, &mut topk, &mut word);
             buffer.clear();
@@ -152,12 +152,12 @@ fn process_bytes(bytes: &[u8], topk: &mut TopK<Word>, word: &mut Word) {
         if word_len > 0 && word_len <= MAX_WORD_LEN {
             // Clear and reuse the word
             word.clear();
-            
+
             // Convert to lowercase while copying
             for &b in &bytes[word_start..pos] {
                 word.push(b.to_ascii_lowercase());
             }
-            
+
             // Add to TopK
             topk.add(word);
         }
