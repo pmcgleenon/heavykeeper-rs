@@ -21,7 +21,7 @@ fn benchmark_topk_add(c: &mut Criterion, num_adds: usize) {
     group.bench_function("Add", |b| {
         b.iter(|| {
             for &key in data.iter() {
-                topk.add(black_box(&key));
+                topk.add(black_box(&key), 1);
             }
         });
     });

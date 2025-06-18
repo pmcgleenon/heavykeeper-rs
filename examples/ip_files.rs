@@ -82,7 +82,7 @@ fn main() -> io::Result<()> {
     // add all the keys to the topk struct
     let start = Instant::now();
     for key in &keys {
-        topk.add(key);
+        topk.add(key, 1);
     }
     let duration = start.elapsed();
 

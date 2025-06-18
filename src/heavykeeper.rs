@@ -161,7 +161,7 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         }
     }
 
-    pub fn add(&mut self, item: &T) {
+    pub fn add(&mut self, item: &T, increment: u64) {
         let mut composer = HashComposer::new(&self.hasher, item);
         let mut max_count: u64 = 0;
 
@@ -174,18 +174,30 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
             
             if matches || empty {
                 bucket.fingerprint = composer.fingerprint();
-                bucket.count += 1;
+                bucket.count += increment;
                 max_count = std::cmp::max(max_count, bucket.count);
             } else {
-                let count_idx = bucket.count as usize;
-                let decay_threshold = if count_idx < self.decay_thresholds.len() {
-                    self.decay_thresholds[count_idx]
-                } else {
-                    self.decay_thresholds.last().cloned().unwrap_or_default()
-                };
-                let rand = self.random.random::<u64>();
-                if rand < decay_threshold {
-                    bucket.count = bucket.count.saturating_sub(1);
+                let mut remaining_incr = increment;
+                while remaining_incr > 0 {
+                    let count_idx = bucket.count as usize;
+                    let decay_threshold = if count_idx < self.decay_thresholds.len() {
+                        self.decay_thresholds[count_idx]
+                    } else {
+                        self.decay_thresholds.last().cloned().unwrap_or_default()
+                    };
+                    let rand = self.random.random::<u64>();
+                    if rand < decay_threshold {
+                        bucket.count = bucket.count.saturating_sub(1);
+
+                        if bucket.count == 0 {
+                            bucket.fingerprint = composer.fingerprint();
+                            bucket.count = remaining_incr;
+                            max_count = std::cmp::max(max_count, bucket.count);
+                            break;
+                        }
+                    }
+
+                    remaining_incr -= 1;
                 }
             }
         }
@@ -327,7 +339,7 @@ mod tests {
         let absent = b"world".to_vec();
 
         // Add the present item
-        topk.add(&present);
+        topk.add(&present, 1);
 
         // Verify query behavior
         assert!(topk.query(&present), "Present item should be found");
@@ -348,18 +360,14 @@ mod tests {
         let item3 = "पुष्पं अस्ति।".as_bytes().to_vec();
 
         // Add first item multiple times
-        for _ in 0..8 {
-            topk.add(&item1);
-        }
+        topk.add(&item1, 8);
         assert_eq!(topk.count(&item1), 8, "Count should match number of additions");
 
         // Verify count for non-existent item
         assert_eq!(topk.count(&item3), 0, "Non-existent item should have count 0");
 
         // Add second item many times
-        for _ in 0..1337 {
-            topk.add(&item2);
-        }
+        topk.add(&item2, 1337);
         assert_eq!(topk.count(&item2), 1337, "Count should match number of additions");
     }
 
@@ -376,9 +384,9 @@ mod tests {
         let mixed = "Hello पुष्पं 🚀".as_bytes().to_vec();
 
         // Add items
-        topk.add(&p);
-        topk.add(&emoji);
-        topk.add(&mixed);
+        topk.add(&p, 1);
+        topk.add(&emoji, 1);
+        topk.add(&mixed, 1);
 
         // Verify presence
         assert!(topk.query(&p), "text should be found");
@@ -391,9 +399,7 @@ mod tests {
         assert_eq!(topk.count(&mixed), 1, "Mixed content count should be 1");
 
         // Add more occurrences
-        for _ in 0..4 {
-            topk.add(&p);
-        }
+        topk.add(&p, 4);
         assert_eq!(topk.count(&p), 5, "text count should be 5");
 
         // Verify display conversion
@@ -414,12 +420,42 @@ mod tests {
         let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
 
         let item = b"hello".to_vec();
-        topk.add(&item);
+        topk.add(&item, 1);
 
         let nodes = topk.list();
         assert_eq!(nodes.len(), 1, "Should have exactly one item");
         assert_eq!(nodes[0].count, 1, "Count should be 1");
         assert_eq!(nodes[0].item, item, "Item should match");
+    }
+
+    /// Tests adding a an item and overwriting it with another
+    #[test]
+    fn test_add_overwrite() {
+        let k = 1;
+        let width = 1;
+        let depth = 1;
+        let decay = 1.0;
+        let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
+
+        // override the decay thresholds so we always decay
+        // this removes the probabilistic aspect of decay
+        topk.decay_thresholds.iter_mut().for_each(|v| *v = u64::MAX);
+
+        let item1 = b"item1".to_vec();
+        topk.add(&item1, 1000);
+
+        let nodes = topk.list();
+        assert_eq!(nodes.len(), 1, "Should have exactly one item");
+        assert_eq!(nodes[0].count, 1000, "Invalid count");
+        assert_eq!(nodes[0].item, item1, "Item should match");
+
+        let item2 = b"item2".to_vec();
+        topk.add(&item2, 3000);
+
+        let nodes = topk.list();
+        assert_eq!(nodes.len(), 1, "Should have exactly one item");
+        assert_eq!(nodes[0].count, 2001, "Invalid count");
+        assert_eq!(nodes[0].item, item2, "Item should match");
     }
 
     /// Tests adding duplicate items and verifying their counts
@@ -436,10 +472,8 @@ mod tests {
         let item2 = b"world".to_vec();
 
         // Add items with equal frequency
-        for _ in 0..7 {
-            topk.add(&item1);
-            topk.add(&item2);
-        }
+        topk.add(&item1, 7);
+        topk.add(&item2, 7);
 
         assert_eq!(topk.priority_queue.len(), k, "Should have exactly k items");
 
@@ -473,7 +507,7 @@ mod tests {
         ];
 
         for item in &items {
-            topk.add(item);
+            topk.add(item, 1);
         }
 
         let nodes = topk.list();
@@ -502,7 +536,7 @@ mod tests {
         ];
 
         for item in &items {
-            topk.add(item);
+            topk.add(item, 1);
         }
 
         let nodes = topk.list();
@@ -547,7 +581,7 @@ mod tests {
         for (item, frequency) in items_with_frequencies.iter() {
             let item_bytes = item.as_bytes().to_vec();
             for _ in 0..*frequency {
-                topk.add(&item_bytes);
+                topk.add(&item_bytes, 1);
             }
         }
 
@@ -589,9 +623,7 @@ mod tests {
         let num_additions = 1000;
 
         // Add the same item many times
-        for _ in 0..num_additions {
-            topk.add(&item);
-        }
+        topk.add(&item, num_additions);
 
         assert_eq!(topk.count(&item), num_additions, "Count should match number of additions");
     }
@@ -612,12 +644,8 @@ mod tests {
         let num_additions_item2 = 499; // One less than item1
 
         // Add items with different frequencies
-        for _ in 0..num_additions_item1 {
-            topk.add(&item1);
-        }
-        for _ in 0..num_additions_item2 {
-            topk.add(&item2);
-        }
+        topk.add(&item1, num_additions_item1);
+        topk.add(&item2, num_additions_item2);
 
         // Verify counts
         assert_eq!(
@@ -646,7 +674,7 @@ mod tests {
         let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
 
         let item = b"new_flow".to_vec();
-        topk.add(&item);
+        topk.add(&item, 1);
 
         // Verify bucket state
         let item_hash = topk.hasher.hash_one(&item);
@@ -676,9 +704,7 @@ mod tests {
         for i in 0..100 {
             let item = format!("item{}", i);
             let item_bytes = item.as_bytes().to_vec();
-            for _ in 0..frequency {
-                topk.add(&item_bytes);
-            }
+            topk.add(&item_bytes, frequency);
         }
 
         // Verify priority queue size
@@ -712,9 +738,7 @@ mod tests {
         for i in 0..3 {
             let item = format!("item{}", i);
             let item_bytes = item.as_bytes().to_vec();
-            for _ in 0..(i + 1) {
-                topk.add(&item_bytes);
-            }
+            topk.add(&item_bytes, i+1);
         }
 
         // Verify priority queue size
@@ -758,14 +782,10 @@ mod tests {
         ];
 
         // Add items with different frequencies
-        topk.add(&items[0]);
-        topk.add(&items[1]);
-        for _ in 0..2 {
-            topk.add(&items[2]);
-        }
-        for _ in 0..5 {
-            topk.add(&items[3]);
-        }
+        topk.add(&items[0], 1);
+        topk.add(&items[1], 1);
+        topk.add(&items[2], 2);
+        topk.add(&items[3], 5);
 
         // Verify counts
         assert_eq!(topk.count(&items[0]), 1, "Count should be 1");
@@ -788,20 +808,12 @@ mod tests {
         ];
 
         // Add items to first instance
-        for _ in 0..5 {
-            hk1.add(&items[0]);
-        }
-        for _ in 0..3 {
-            hk1.add(&items[1]);
-        }
+        hk1.add(&items[0], 5);
+        hk1.add(&items[1], 3);
 
         // Add items to second instance
-        for _ in 0..4 {
-            hk2.add(&items[0]);
-        }
-        for _ in 0..6 {
-            hk2.add(&items[2]);
-        }
+        hk2.add(&items[0], 4);
+        hk2.add(&items[2], 6);
 
         // Merge and verify counts
         hk1.merge(&hk2).unwrap();
@@ -854,13 +866,11 @@ mod tests {
         ];
 
         // Add overlapping items
-        for _ in 0..5 {
-            hk1.add(&items[0]);
-            hk2.add(&items[0]);
-        }
+        hk1.add(&items[0], 5);
+        hk2.add(&items[0], 5);
 
-        hk1.add(&items[1]);
-        hk2.add(&items[2]);
+        hk1.add(&items[1], 1);
+        hk2.add(&items[2], 1);
 
         // Merge and verify counts
         hk1.merge(&hk2).unwrap();
