@@ -159,7 +159,7 @@ fn process_bytes(bytes: &[u8], topk: &mut TopK<Word>, word: &mut Word) {
             }
             
             // Add to TopK
-            topk.add(word);
+            topk.add(word, 1);
         }
     }
 }
