@@ -77,7 +77,7 @@ pub struct TopK<T: Ord + Clone + Hash + Debug> {
     buckets: Vec<Vec<Bucket>>,
     priority_queue: TopKQueue<T>,
     hasher: RandomState,
-    random: Box<dyn RngCore>,
+    random: Box<dyn RngCore + Send>,
 }
 
 pub struct Builder<T> {
@@ -87,7 +87,7 @@ pub struct Builder<T> {
     decay: Option<f64>,
     seed: Option<u64>,
     hasher: Option<RandomState>,
-    rng: Option<Box<dyn RngCore>>,
+    rng: Option<Box<dyn RngCore + Send>>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -122,7 +122,7 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         Self::with_components(k, width, depth, decay, hasher, Box::new(SmallRng::seed_from_u64(0)))
     }
 
-    fn with_components(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState, rng: Box<dyn RngCore>) -> Self {
+    fn with_components(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState, rng: Box<dyn RngCore + Send>) -> Self {
         // Pre-allocate with capacity to avoid resizing
         let mut buckets = Vec::with_capacity(depth);
         for _ in 0..depth {
@@ -408,7 +408,7 @@ impl<T: Ord + Clone + Hash + Debug> Builder<T> {
         self
     }
 
-    pub fn rng<R: RngCore + 'static>(mut self, rng: R) -> Self {
+    pub fn rng<R: RngCore + Send + 'static>(mut self, rng: R) -> Self {
         self.rng = Some(Box::new(rng));
         self
     }
@@ -1193,6 +1193,24 @@ mod tests {
             .depth(5)
             .build();
         assert!(matches!(result, Err(BuilderError::MissingField { field }) if field == "decay"));
+    }
+
+    #[test]
+    fn test_send_sync_issue() {
+        use std::sync::{Arc, Mutex};
+        use std::collections::HashMap;
+        use std::thread;
+        
+        type Id = String;
+        type IdTopK = Arc<Mutex<HashMap<Id, TopK<String>>>>;
+        
+        let topk_map: IdTopK = Arc::new(Mutex::new(HashMap::new()));
+        
+        thread::spawn(move || {
+            let mut map = topk_map.lock().unwrap();
+            let topk = TopK::new(10, 100, 5, 0.9);
+            map.insert("test".to_string(), topk);
+        });
     }
 }
 
