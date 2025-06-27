@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.5.0...v0.5.1) - 2025-06-27
+
+### Other
+
+- Merge pull request #44 from pmcgleenon/dependabot/cargo/mockall-0.13
+- added Send trait to  rng
+
+## [0.5.0](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.4.0...v0.5.0) - 2025-06-20
+
+### Other
+
+- updated decay logic + added tests
+- add increment argument to TopK::add
+
 ## [0.4.0](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.3.1...v0.4.0) - 2025-05-31
 
 ### Other

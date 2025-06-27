@@ -1,6 +1,6 @@
 [package]
 name = "heavykeeper"
-version = "0.4.0"
+version = "0.5.1"
 edition = "2021"
 authors = [ "Patrick McGleenon"]
 description = "HeavyKeeper is for finding Top-K elephant flows with high precision and low memory footprint."
@@ -32,6 +32,7 @@ debug = true
 
 [dev-dependencies]
 criterion = "0.6.0"
+mockall = "0.13"
 
 [[bench]]
 name = "topk_add"

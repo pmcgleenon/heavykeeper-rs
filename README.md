@@ -34,8 +34,8 @@ use heavykeeper::TopK;
 let mut topk: TopK<Vec<u8>> = TopK::new(10, 1000, 4, 0.9);
 
 // add some items
-topk.add(b"example item".to_vec());
-topk.add(b"another item".to_vec());
+topk.add(b"example item".to_vec(), 5);
+topk.add(b"another item".to_vec(), 1);
 
 // check the counts
 for node in topk.list() {

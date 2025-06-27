@@ -1,8 +1,9 @@
 #![allow(deprecated)]
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use heavykeeper::TopK;
 use rand::distr::StandardUniform;
 use rand::prelude::*;
+use std::hint::black_box;
 
 fn benchmark_topk_add(c: &mut Criterion, num_adds: usize) {
     let mut rng = rand::rng();
@@ -22,7 +23,7 @@ fn benchmark_topk_add(c: &mut Criterion, num_adds: usize) {
     group.bench_function("Add", |b| {
         b.iter(|| {
             for &key in data.iter() {
-                topk.add(black_box(&key));
+                topk.add(black_box(&key), 1);
             }
         });
     });
