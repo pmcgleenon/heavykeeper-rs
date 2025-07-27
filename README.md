@@ -31,15 +31,15 @@ Basic usage:
 use heavykeeper::TopK;
 
 // create a new TopK with k=10, width=1000, depth=4, decay=0.9
-let mut topk: TopK<Vec<u8>> = TopK::new(10, 1000, 4, 0.9);
+let mut topk: TopK<String> = TopK::new(10, 1000, 4, 0.9);
 
 // add some items
-topk.add(b"example item".to_vec(), 5);
-topk.add(b"another item".to_vec(), 1);
+topk.add("example item", 5);
+topk.add("another item", 1);
 
 // check the counts
 for node in topk.list() {
-    println!("{} {}", String::from_utf8_lossy(&node.item), node.count);
+    println!("{} {}", node.item, node.count);
 }
 ```
 
@@ -58,12 +58,14 @@ for node in topk.list() {
 
 # Running
 
-An example driver program which can be used as a word count program can be found at [`main.rs`](src/main.rs).
+## Word Count Example
 
-Usage:
+A word count program that demonstrates the HeavyKeeper algorithm can be found at [`examples/word_count.rs`](examples/word_count.rs).
+
+### Usage
 ```bash
-cargo build --release
-target/release/heavykeeper -k 10 -w 8192 -d 2 -y 0.95 -f data/war_and_peace.txt
+cargo build --example word_count --release
+target/release/examples/word_count -k 10 -w 8192 -d 2 -y 0.95 -f data/war_and_peace.txt
 ```
 
 ## Running the basic example 
@@ -83,7 +85,7 @@ cargo bench
 
 ## Benchmark the sample word count app
 ```bash
-hyperfine 'target/release/heavykeeper -k 10 -w 8192 -d 2 -y 0.95 -f data/war_and_peace.txt'
+hyperfine 'target/release/examples/word_count -k 10 -w 8192 -d 2 -y 0.95 -f data/war_and_peace.txt'
 ```
 
 ## Test Data
