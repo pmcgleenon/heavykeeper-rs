@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::hash::Hash;
 use ahash::RandomState;
@@ -33,7 +34,11 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
         self.items.len()
     }
 
-    pub(crate) fn get(&self, item: &T) -> Option<u64> {
+    pub(crate) fn get<Q>(&self, item: &Q) -> Option<u64>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
+    {
         self.items.get(item).map(|(count, _)| *count)
     }
 

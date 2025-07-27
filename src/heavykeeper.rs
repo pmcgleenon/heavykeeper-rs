@@ -1,4 +1,5 @@
 use ahash::RandomState;
+use std::borrow::Borrow;
 use std::clone::Clone;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -142,7 +143,11 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         }
     }
 
-    pub fn query(&self, item: &T) -> bool {
+    pub fn query<Q>(&self, item: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
+    {
         if self.priority_queue.get(item).is_some() {
             return true;
         }
@@ -162,7 +167,11 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         min_count != u64::MAX
     }
 
-    pub fn count(&self, item: &T) -> u64 {
+    pub fn count<Q>(&self, item: &Q) -> u64
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
+    {
         if let Some(count) = self.priority_queue.get(item) {
             return count;
         }
@@ -187,7 +196,11 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
     }
 
     #[cfg(test)]
-    pub fn bucket_count(&self, item: &T) -> u64 {
+    pub fn bucket_count<Q>(&self, item: &Q) -> u64
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
+    {
         let mut composer = HashComposer::new(&self.hasher, item);
         let mut min_count = u64::MAX;
 
@@ -207,7 +220,11 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         }
     }
 
-    pub fn add(&mut self, item: &T, increment: u64) {
+    pub fn add<Q>(&mut self, item: &Q, increment: u64)
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
+    {
         let mut composer = HashComposer::new(&self.hasher, item);
         let mut max_count: u64 = 0;
 
@@ -265,7 +282,7 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         }
 
         // Clone the item here since we need to store it in the priority queue
-        self.priority_queue.upsert(item.clone(), max_count);
+        self.priority_queue.upsert(item.to_owned(), max_count);
     }
 
     pub fn list(&self) -> Vec<Node<T>> {
@@ -1211,6 +1228,22 @@ mod tests {
             let topk = TopK::new(10, 100, 5, 0.9);
             map.insert("test".to_string(), topk);
         });
+    }
+
+    /// Tests that `add` accepts borrowed values (e.g., &str and &[u8])
+    #[test]
+    fn test_borrow() {
+        let mut topk: TopK<String> = TopK::new(10, 100, 5, 0.9);
+        let item: &str = "foo";
+        topk.add(item, 1);
+        assert!(topk.query(item));
+        assert_eq!(topk.count(item), 1);
+
+        let mut topk: TopK<Vec<u8>> = TopK::new(10, 100, 5, 0.9);
+        let item: &[u8] = b"foo";
+        topk.add(item, 1);
+        assert!(topk.query(item));
+        assert_eq!(topk.count(item), 1);
     }
 }
 
