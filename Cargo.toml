@@ -29,7 +29,7 @@ thiserror = "2.0.11"
 debug = true
 
 [dev-dependencies]
-criterion = "0.6.0"
+criterion = "0.7.0"
 mockall = "0.13"
 clap = { version = "4.5.19", features = ["derive"] }
 memmap2 = "0.9.5"
