@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.0...v0.6.1) - 2025-09-02
+
+### Other
+
+- added Sync to rng
+- Merge pull request #52 from pmcgleenon/dependabot/cargo/criterion-0.7.0
+
 ## [0.6.0](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.5.1...v0.6.0) - 2025-07-27
 
 ### Other
