@@ -96,7 +96,8 @@ fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Vec<u64> {
     let mut thresholds = Vec::with_capacity(num_entries);
     for count in 0..num_entries {
         let decay_factor = decay.powf(count as f64);
-        let threshold = (decay_factor * (1u64 << 63) as f64) as u64;
+        // Use full u64 range so decay_factor = 1.0 gives probability ~= 1.0 (not 0.5)
+        let threshold = (decay_factor * u64::MAX as f64) as u64;
         thresholds.push(threshold);
     }
     thresholds
@@ -248,13 +249,15 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
                     } else {
 
                         let lookup_size = self.decay_thresholds.len();
-                        let base_threshold = self.decay_thresholds[lookup_size - 1] as f64 / (1u64 << 63) as f64;
+                        // Keep extrapolation normalized to the same [0,1] scale as precomputed thresholds.
+                        let base_threshold = self.decay_thresholds[lookup_size - 1] as f64 / u64::MAX as f64;
                         let divisor = lookup_size - 1;
                         let quotient = count_idx / divisor;
                         let remainder = count_idx % divisor;
-                        let remainder_threshold = self.decay_thresholds[remainder] as f64 / (1u64 << 63) as f64;
+                        let remainder_threshold = self.decay_thresholds[remainder] as f64 / u64::MAX as f64;
                         let decay = base_threshold.powi(quotient as i32) * remainder_threshold;
-                        (decay * (1u64 << 63) as f64) as u64
+                        // Re-scale back into u64 range consistent with precomputed thresholds.
+                        (decay * u64::MAX as f64) as u64
                     };
                     let rand = self.random.next_u64();
                     if rand < decay_threshold {
@@ -1250,6 +1253,50 @@ mod tests {
         topk.add(item, 1);
         assert!(topk.query(item));
         assert_eq!(topk.count(item), 1);
+    }
+
+    /// Tests that decay probability scaling uses the full u64 range
+    ///
+    /// With decay = 1.0 and RNG always returning exactly 2^63, the old
+    /// implementation (which used threshold = 2^63) would never decay
+    /// because `rand < threshold` was false for rand = 2^63.
+    ///
+    /// After the fix (threshold = u64::MAX), the same condition is true,
+    /// so the bucket is always decayed and replaced as expected for
+    /// probability 1.0.
+    #[test]
+    fn test_decay_probability_scaling_fix() {
+        let mut mock_rng = MockRngCoreTrait::new();
+        // Always return value exactly at the old threshold: 2^63.
+        mock_rng
+            .expect_next_u64()
+            .times(1..) // Allow multiple calls
+            .return_const(1u64 << 63);
+
+        let mut topk = TopK::<Vec<u8>>::builder()
+            .k(1)
+            .width(1)
+            .depth(1)
+            .decay(1.0)
+            .rng(mock_rng)
+            .build()
+            .unwrap();
+
+        let item1 = b"item1".to_vec();
+        let item2 = b"item2".to_vec();
+
+        // First insert item1: single bucket becomes (fp(item1), count = 1).
+        topk.add(&item1, 1);
+        assert_eq!(topk.bucket_count(&item1), 1);
+        assert_eq!(topk.bucket_count(&item2), 0);
+
+        // Now insert item2, which collides into the same bucket and should
+        // *always* trigger decay when decay_factor == 1.0.
+        topk.add(&item2, 1);
+
+        // With correct scaling, item1 is fully decayed and replaced by item2.
+        assert_eq!(topk.bucket_count(&item1), 0);
+        assert_eq!(topk.bucket_count(&item2), 1);
     }
 }
 
