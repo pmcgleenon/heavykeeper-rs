@@ -104,26 +104,25 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&T, u64)> {
-        let mut items: Vec<_> = self.items.iter().map(|(k, v)| (k, v.0)).collect();
-        // Sort by count descending, then by sequence ascending
-        items.sort_unstable_by(|(k1, v1), (k2, v2)| {
-            match v2.cmp(v1) {
-                std::cmp::Ordering::Equal => {
-                    // For equal counts, compare sequence numbers
-                    let seq1 = self.heap.iter()
-                        .find(|(_, _, item_idx)| &self.item_store[*item_idx] == *k1)
-                        .map(|(_, s, _)| *s)
-                        .unwrap_or(0);
-                    let seq2 = self.heap.iter()
-                        .find(|(_, _, item_idx)| &self.item_store[*item_idx] == *k2)
-                        .map(|(_, s, _)| *s)
-                        .unwrap_or(0);
-                    seq1.cmp(&seq2)  // Earlier insertions first
-                },
-                other => other
-            }
+        // Materialize (key, count, sequence) using stored heap index so
+        // per-comparison work is O(1) instead of scanning the heap.
+        let mut items: Vec<_> = self
+            .items
+            .iter()
+            .map(|(k, (count, heap_idx))| {
+                let seq = self.heap[*heap_idx].1;
+                (k, *count, seq)
+            })
+            .collect();
+
+        // Sort by count descending, then by sequence ascending.
+        items.sort_unstable_by(|(_, c1, s1), (_, c2, s2)| match c2.cmp(c1) {
+            std::cmp::Ordering::Equal => s1.cmp(s2),
+            other => other,
         });
-        items.into_iter()
+
+        // Return an iterator over (&T, count), preserving sorted order.
+        items.into_iter().map(|(k, count, _)| (k, count))
     }
 
     // Binary heap helper methods using Eytzinger layout (0-based indexing)

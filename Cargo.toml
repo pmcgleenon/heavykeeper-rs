@@ -37,3 +37,7 @@ memmap2 = "0.9.5"
 [[bench]]
 name = "topk_add"
 harness = false
+
+[[bench]]
+name = "topk_list"
+harness = false
