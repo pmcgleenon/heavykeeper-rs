@@ -9,15 +9,20 @@ use thiserror::Error;
 use crate::priority_queue::TopKQueue;
 use crate::hash_composition::HashComposer;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 const DECAY_LOOKUP_SIZE: usize = 1024;
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 struct Bucket {
     fingerprint: u64,
     count: u64,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Node<T> {
     pub item: T,
     pub count: u64,
@@ -69,6 +74,7 @@ pub enum BuilderError {
     MissingField { field: String },
 }
 
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct TopK<T: Ord + Clone + Hash + Debug> {
     top_items: usize,
     width: usize,
@@ -78,7 +84,13 @@ pub struct TopK<T: Ord + Clone + Hash + Debug> {
     buckets: Vec<Vec<Bucket>>,
     priority_queue: TopKQueue<T>,
     hasher: RandomState,
+    #[cfg_attr(feature = "serde", serde(skip, default = "default_rng"))]
     random: Box<dyn RngCore + Send + Sync>,
+}
+
+#[cfg(feature = "serde")]
+fn default_rng() -> Box<dyn RngCore + Send + Sync> {
+    Box::new(SmallRng::seed_from_u64(0))
 }
 
 pub struct Builder<T> {
@@ -292,6 +304,10 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         }).collect::<Vec<_>>();
         nodes.sort();
         nodes
+    }
+
+    pub fn is_top(&self, key: &T) -> bool {
+        self.priority_queue.contains_key(key)
     }
 
     pub fn debug(&self) {
@@ -522,6 +538,27 @@ mod tests {
         assert!(topk.query(&present), "Present item should be found");
         assert!(!topk.query(&absent), "Absent item should not be found");
     }
+
+    /// Tests is_stop functionality
+    #[test]
+    fn test_is_top() {
+        let mut topk: TopK<Vec<u8>> = TopK::new(2, 100, 5, 0.9);
+
+        let k1 = b"1".to_vec();
+        let k2 = b"2".to_vec();
+        let k3 = b"3".to_vec();
+
+        // Add the present item
+        topk.add(&k1, 10);
+        topk.add(&k2, 10);
+        topk.add(&k3, 1);
+
+        // Verify query behavior
+        assert!(topk.is_top(&k1), "value is not in top list");
+        assert!(topk.is_top(&k2), "value is not in top list");
+        assert!(topk.is_top(&k2), "value is in top list");
+    }
+
 
     /// Tests count functionality for items with varying frequencies
     #[test]
@@ -1251,5 +1288,30 @@ mod tests {
         assert!(topk.query(item));
         assert_eq!(topk.count(item), 1);
     }
-}
 
+
+    #[test]
+    fn test_serialize() {
+        let mut topk: TopK<String> = TopK::new(10, 100, 5, 0.9);
+
+        for i in 0..10 {
+            topk.add(&format!("test{}", i), 10);
+        }
+
+        let serialized = bincode::serialize(&topk).expect("failed to serialize");
+        let deserialized: TopK<String> =
+            bincode::deserialize(&serialized).expect("failed to deserialize");
+
+        assert_eq!(topk.top_items, deserialized.top_items);
+        assert_eq!(topk.width, deserialized.width);
+        assert_eq!(topk.decay, deserialized.decay);
+        assert_eq!(topk.decay_thresholds, deserialized.decay_thresholds);
+
+        assert_eq!(topk.buckets, deserialized.buckets);
+        assert_eq!(topk.priority_queue, deserialized.priority_queue);
+
+        // check merges work
+
+        topk.merge(&deserialized).expect("merge failed");
+    }
+}

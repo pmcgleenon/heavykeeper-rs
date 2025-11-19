@@ -3,8 +3,16 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use ahash::RandomState;
 
+#[cfg(feature = "serde")]
+use serde::{Serialize, Deserialize};
+
 /// A specialized priority queue for HeavyKeeper that maintains top-k items by count
-pub(crate) struct TopKQueue<T> {
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize, Serialize)
+)]
+#[derive(PartialEq, Debug)]
+pub(crate) struct TopKQueue<T: Ord + Clone + Hash + PartialEq> {
     items: HashMap<T, (u64, usize), RandomState>,  // item -> (count, heap_index)
     heap: Vec<(u64, usize, usize)>,  // (count, sequence, item_index)
     item_store: Vec<T>,  // Store actual items here
@@ -40,6 +48,14 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
     {
         self.items.get(item).map(|(count, _)| *count)
+    }
+
+    pub(crate) fn contains_key<Q>(&self, item: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
+    {
+        self.items.contains_key(item)
     }
 
     pub(crate) fn min_count(&self) -> u64 {
@@ -197,6 +213,8 @@ mod tests {
         
         let items: Vec<_> = queue.iter().collect();
         assert_eq!(items, vec![(&"b", 2), (&"a", 1)]);
+
+        assert!(queue.contains_key(&"a"));
     }
 
     #[test]
