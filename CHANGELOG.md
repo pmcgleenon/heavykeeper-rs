@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.1...v0.6.2) - 2025-11-19
+
+### Other
+
+- Improve TopKQueue::iter perf + add list benchmark
+- Fix decay probability scaling and add test
+
 ## [0.6.1](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.0...v0.6.1) - 2025-09-02
 
 ### Other
