@@ -2,7 +2,7 @@ use ahash::RandomState;
 use std::borrow::Borrow;
 use std::clone::Clone;
 use std::fmt::Debug;
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash};
 use rand::{SeedableRng, RngCore};
 use rand::rngs::SmallRng;
 use thiserror::Error;
@@ -61,33 +61,42 @@ pub enum HeavyKeeperError {
         self_items: usize,
         other_items: usize,
     },
+
+    #[error("Missing required field: k")]
+    MissingK,
+
+    #[error("Missing required field: width")]
+    MissingWidth,
+
+    #[error("Missing required field: depth")]
+    MissingDepth,
+
+    #[error("Missing required field: decay")]
+    MissingDecay,
+
+    #[error("Missing required field: hasher")]
+    MissingHasher,
 }
 
-#[derive(Error, Debug)]
-pub enum BuilderError {
-    #[error("Missing required field: {field}")]
-    MissingField { field: String },
-}
-
-pub struct TopK<T: Ord + Clone + Hash + Debug> {
+pub struct TopK<T: Ord + Clone + Hash + Debug, S: BuildHasher + Clone = RandomState> {
     top_items: usize,
     width: usize,
     depth: usize,
     decay: f64,
     decay_thresholds: Vec<u64>,
     buckets: Vec<Vec<Bucket>>,
-    priority_queue: TopKQueue<T>,
-    hasher: RandomState,
+    priority_queue: TopKQueue<T, S>,
+    hasher: S,
     random: Box<dyn RngCore + Send + Sync>,
 }
 
-pub struct Builder<T> {
+pub struct Builder<T, S: BuildHasher + Clone = RandomState> {
     k: Option<usize>,
     width: Option<usize>,
     depth: Option<usize>,
     decay: Option<f64>,
     seed: Option<u64>,
-    hasher: Option<RandomState>,
+    hasher: Option<S>,
     rng: Option<Box<dyn RngCore + Send + Sync>>,
     _phantom: std::marker::PhantomData<T>,
 }
@@ -109,22 +118,22 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
     }
 
     pub fn new(k: usize, width: usize, depth: usize, decay: f64) -> Self {
-        // Use a consistent seed for default initialization
-        let seed = 12345; // Arbitrary but fixed seed
+        let seed = 12345;
         Self::with_seed(k, width, depth, decay, seed)
     }
 
-    // New constructor that takes a seed
     pub fn with_seed(k: usize, width: usize, depth: usize, decay: f64, seed: u64) -> Self {
         let hasher = RandomState::with_seeds(seed, seed, seed, seed);
         Self::with_hasher(k, width, depth, decay, hasher)
     }
+}
 
-    pub fn with_hasher(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState) -> Self {
+impl<T: Ord + Clone + Hash + Debug, S: BuildHasher + Clone> TopK<T, S> {
+    pub fn with_hasher(k: usize, width: usize, depth: usize, decay: f64, hasher: S) -> Self {
         Self::with_components(k, width, depth, decay, hasher, Box::new(SmallRng::seed_from_u64(0)))
     }
 
-    fn with_components(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState, rng: Box<dyn RngCore + Send + Sync>) -> Self {
+    fn with_components(k: usize, width: usize, depth: usize, decay: f64, hasher: S, rng: Box<dyn RngCore + Send + Sync>) -> Self {
         // Pre-allocate with capacity to avoid resizing
         let mut buckets = Vec::with_capacity(depth);
         for _ in 0..depth {
@@ -329,7 +338,6 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         }
     }
 
-    // Merge another HeavyKeeper into this one
     pub fn merge(&mut self, other: &Self) -> Result<(), HeavyKeeperError> {
         // Verify compatible parameters
         if self.width != other.width {
@@ -404,6 +412,38 @@ impl<T: Ord + Clone + Hash + Debug> Builder<T> {
         }
     }
 
+    pub fn seed(mut self, seed: u64) -> Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    pub fn build(self) -> Result<TopK<T>, HeavyKeeperError> {
+        let k = self.k.ok_or_else(|| HeavyKeeperError::MissingK)?;
+        let width = self.width.ok_or_else(|| HeavyKeeperError::MissingWidth)?;
+        let depth = self.depth.ok_or_else(|| HeavyKeeperError::MissingDepth)?;
+        let decay = self.decay.ok_or_else(|| HeavyKeeperError::MissingDecay)?;
+
+        let hasher = self.hasher.unwrap_or_else(|| {
+            if let Some(seed) = self.seed {
+                RandomState::with_seeds(seed, seed, seed, seed)
+            } else {
+                RandomState::new()
+            }
+        });
+
+        let rng = self.rng.unwrap_or_else(|| {
+            if let Some(seed) = self.seed {
+                Box::new(SmallRng::seed_from_u64(seed))
+            } else {
+                Box::new(SmallRng::from_os_rng())
+            }
+        });
+
+        Ok(TopK::with_components(k, width, depth, decay, hasher, rng))
+    }
+}
+
+impl<T: Ord + Clone + Hash + Debug, S: BuildHasher + Clone> Builder<T, S> {
     pub fn k(mut self, k: usize) -> Self {
         self.k = Some(k);
         self
@@ -424,12 +464,7 @@ impl<T: Ord + Clone + Hash + Debug> Builder<T> {
         self
     }
 
-    pub fn seed(mut self, seed: u64) -> Self {
-        self.seed = Some(seed);
-        self
-    }
-
-    pub fn hasher(mut self, hasher: RandomState) -> Self {
+    pub fn hasher(mut self, hasher: S) -> Self {
         self.hasher = Some(hasher);
         self
     }
@@ -439,26 +474,16 @@ impl<T: Ord + Clone + Hash + Debug> Builder<T> {
         self
     }
 
-    pub fn build(self) -> Result<TopK<T>, BuilderError> {
-        let k = self.k.ok_or_else(|| BuilderError::MissingField { field: "k".to_string() })?;
-        let width = self.width.ok_or_else(|| BuilderError::MissingField { field: "width".to_string() })?;
-        let depth = self.depth.ok_or_else(|| BuilderError::MissingField { field: "depth".to_string() })?;
-        let decay = self.decay.ok_or_else(|| BuilderError::MissingField { field: "decay".to_string() })?;
+    pub fn build_with_hasher(self) -> Result<TopK<T, S>, HeavyKeeperError> {
+        let k = self.k.ok_or_else(|| HeavyKeeperError::MissingK)?;
+        let width = self.width.ok_or_else(|| HeavyKeeperError::MissingWidth)?;
+        let depth = self.depth.ok_or_else(|| HeavyKeeperError::MissingDepth)?;
+        let decay = self.decay.ok_or_else(|| HeavyKeeperError::MissingDecay)?;
 
-        let hasher = self.hasher.unwrap_or_else(|| {
-            if let Some(seed) = self.seed {
-                RandomState::with_seeds(seed, seed, seed, seed)
-            } else {
-                RandomState::new()
-            }
-        });
+        let hasher = self.hasher.ok_or_else(|| HeavyKeeperError::MissingHasher)?;
 
         let rng = self.rng.unwrap_or_else(|| {
-            if let Some(seed) = self.seed {
-                Box::new(SmallRng::seed_from_u64(seed))
-            } else {
-                Box::new(SmallRng::seed_from_u64(0))
-            }
+            Box::new(SmallRng::seed_from_u64(0))
         });
 
         Ok(TopK::with_components(k, width, depth, decay, hasher, rng))
@@ -1194,7 +1219,7 @@ mod tests {
             .depth(5)
             .decay(0.9)
             .build();
-        assert!(matches!(result, Err(BuilderError::MissingField { field }) if field == "k"));
+        assert!(matches!(result, Err(HeavyKeeperError::MissingK)));
 
         // Test missing width
         let result = TopK::<Vec<u8>>::builder()
@@ -1202,7 +1227,7 @@ mod tests {
             .depth(5)
             .decay(0.9)
             .build();
-        assert!(matches!(result, Err(BuilderError::MissingField { field }) if field == "width"));
+        assert!(matches!(result, Err(HeavyKeeperError::MissingWidth)));
 
         // Test missing depth
         let result = TopK::<Vec<u8>>::builder()
@@ -1210,7 +1235,7 @@ mod tests {
             .width(100)
             .decay(0.9)
             .build();
-        assert!(matches!(result, Err(BuilderError::MissingField { field }) if field == "depth"));
+        assert!(matches!(result, Err(HeavyKeeperError::MissingDepth)));
 
         // Test missing decay
         let result = TopK::<Vec<u8>>::builder()
@@ -1218,7 +1243,7 @@ mod tests {
             .width(100)
             .depth(5)
             .build();
-        assert!(matches!(result, Err(BuilderError::MissingField { field }) if field == "decay"));
+        assert!(matches!(result, Err(HeavyKeeperError::MissingDecay)));
     }
 
     #[test]

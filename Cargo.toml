@@ -33,6 +33,8 @@ criterion = "0.7.0"
 mockall = "0.13"
 clap = { version = "4.5.19", features = ["derive"] }
 memmap2 = "0.9.5"
+rustc-hash = "2.1.1"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [[bench]]
 name = "topk_add"
