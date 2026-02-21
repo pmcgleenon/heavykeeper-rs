@@ -30,7 +30,7 @@ debug = true
 
 [dev-dependencies]
 criterion = "0.8.2"
-mockall = "0.13"
+mockall = "0.14"
 clap = { version = "4.5.19", features = ["derive"] }
 memmap2 = "0.9.5"
 
