@@ -3,7 +3,7 @@ use std::borrow::Borrow;
 use std::clone::Clone;
 use std::fmt::Debug;
 use std::hash::Hash;
-use rand::{SeedableRng, RngCore};
+use rand::{SeedableRng, Rng};
 use rand::rngs::SmallRng;
 use thiserror::Error;
 use crate::priority_queue::TopKQueue;
@@ -78,7 +78,7 @@ pub struct TopK<T: Ord + Clone + Hash + Debug> {
     buckets: Vec<Vec<Bucket>>,
     priority_queue: TopKQueue<T>,
     hasher: RandomState,
-    random: Box<dyn RngCore + Send + Sync>,
+    random: Box<dyn Rng + Send + Sync>,
 }
 
 pub struct Builder<T> {
@@ -88,7 +88,7 @@ pub struct Builder<T> {
     decay: Option<f64>,
     seed: Option<u64>,
     hasher: Option<RandomState>,
-    rng: Option<Box<dyn RngCore + Send + Sync>>,
+    rng: Option<Box<dyn Rng + Send + Sync>>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -124,7 +124,7 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         Self::with_components(k, width, depth, decay, hasher, Box::new(SmallRng::seed_from_u64(0)))
     }
 
-    fn with_components(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState, rng: Box<dyn RngCore + Send + Sync>) -> Self {
+    fn with_components(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState, rng: Box<dyn Rng + Send + Sync>) -> Self {
         // Pre-allocate with capacity to avoid resizing
         let mut buckets = Vec::with_capacity(depth);
         for _ in 0..depth {
@@ -434,7 +434,7 @@ impl<T: Ord + Clone + Hash + Debug> Builder<T> {
         self
     }
 
-    pub fn rng<R: RngCore + Send + Sync + 'static>(mut self, rng: R) -> Self {
+    pub fn rng<R: Rng + Send + Sync + 'static>(mut self, rng: R) -> Self {
         self.rng = Some(Box::new(rng));
         self
     }
@@ -468,29 +468,38 @@ impl<T: Ord + Clone + Hash + Debug> Builder<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockall::automock;
+    use std::convert::Infallible;
 
-    #[automock]
-    trait RngCoreTrait {
-        fn next_u64(&mut self) -> u64;
+    // Deterministic RNG used to hit exact decay-threshold boundaries in tests.
+    struct FixedRng {
+        value: u64,
     }
 
-    impl RngCore for MockRngCoreTrait {
-        fn next_u32(&mut self) -> u32 {
-            RngCoreTrait::next_u64(self) as u32
+    impl FixedRng {
+        fn new(value: u64) -> Self {
+            Self { value }
         }
-        
-        fn next_u64(&mut self) -> u64 {
-            RngCoreTrait::next_u64(self)
+    }
+
+    impl rand::TryRng for FixedRng {
+        type Error = Infallible;
+
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            Ok(self.try_next_u64()? as u32)
         }
-        
-        fn fill_bytes(&mut self, dest: &mut [u8]) {
+
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            Ok(self.value)
+        }
+
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
             for chunk in dest.chunks_mut(8) {
-                let value = RngCoreTrait::next_u64(self);
+                let value = self.try_next_u64()?;
                 for (i, byte) in chunk.iter_mut().enumerate() {
                     *byte = (value >> (i * 8)) as u8;
                 }
             }
+            Ok(())
         }
     }
 
@@ -1064,17 +1073,12 @@ mod tests {
 
     #[test]
     fn test_decay_logic_with_mock_rng() {
-        let mut mock_rng = MockRngCoreTrait::new();
-        mock_rng.expect_next_u64()
-            .times(1..) // Allow multiple calls
-            .return_const(0u64);
-        
         let topk = TopK::<Vec<u8>>::builder()
             .k(1)
             .width(1)
             .depth(1)
             .decay(0.9)
-            .rng(mock_rng)
+            .rng(FixedRng::new(0))
             .build()
             .unwrap();
         
@@ -1114,17 +1118,12 @@ mod tests {
 
     #[test]
     fn test_decay_and_eviction() {
-        let mut mock_rng = MockRngCoreTrait::new();
-        mock_rng.expect_next_u64()
-            .times(1..)
-            .return_const(0u64);
-
         let topk = TopK::<Vec<u8>>::builder()
             .k(1)
             .width(1)
             .depth(1)
             .decay(0.9)
-            .rng(mock_rng)
+            .rng(FixedRng::new(0))
             .build()
             .unwrap();
 
@@ -1266,19 +1265,13 @@ mod tests {
     /// probability 1.0.
     #[test]
     fn test_decay_probability_scaling_fix() {
-        let mut mock_rng = MockRngCoreTrait::new();
-        // Always return value exactly at the old threshold: 2^63.
-        mock_rng
-            .expect_next_u64()
-            .times(1..) // Allow multiple calls
-            .return_const(1u64 << 63);
-
         let mut topk = TopK::<Vec<u8>>::builder()
             .k(1)
             .width(1)
             .depth(1)
             .decay(1.0)
-            .rng(mock_rng)
+            // Always return value exactly at the old threshold: 2^63.
+            .rng(FixedRng::new(1u64 << 63))
             .build()
             .unwrap();
 
@@ -1299,4 +1292,3 @@ mod tests {
         assert_eq!(topk.bucket_count(&item2), 1);
     }
 }
-
