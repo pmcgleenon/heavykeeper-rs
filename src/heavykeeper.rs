@@ -3,7 +3,7 @@ use std::borrow::Borrow;
 use std::clone::Clone;
 use std::fmt::Debug;
 use std::hash::Hash;
-use rand::{SeedableRng, RngCore};
+use rand::{SeedableRng, Rng};
 use rand::rngs::SmallRng;
 use thiserror::Error;
 use crate::priority_queue::TopKQueue;
@@ -78,7 +78,7 @@ pub struct TopK<T: Ord + Clone + Hash + Debug> {
     buckets: Vec<Vec<Bucket>>,
     priority_queue: TopKQueue<T>,
     hasher: RandomState,
-    random: Box<dyn RngCore + Send + Sync>,
+    random: Box<dyn Rng + Send + Sync>,
 }
 
 pub struct Builder<T> {
@@ -88,7 +88,7 @@ pub struct Builder<T> {
     decay: Option<f64>,
     seed: Option<u64>,
     hasher: Option<RandomState>,
-    rng: Option<Box<dyn RngCore + Send + Sync>>,
+    rng: Option<Box<dyn Rng + Send + Sync>>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -124,7 +124,7 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         Self::with_components(k, width, depth, decay, hasher, Box::new(SmallRng::seed_from_u64(0)))
     }
 
-    fn with_components(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState, rng: Box<dyn RngCore + Send + Sync>) -> Self {
+    fn with_components(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState, rng: Box<dyn Rng + Send + Sync>) -> Self {
         // Pre-allocate with capacity to avoid resizing
         let mut buckets = Vec::with_capacity(depth);
         for _ in 0..depth {
@@ -434,7 +434,7 @@ impl<T: Ord + Clone + Hash + Debug> Builder<T> {
         self
     }
 
-    pub fn rng<R: RngCore + Send + Sync + 'static>(mut self, rng: R) -> Self {
+    pub fn rng<R: Rng + Send + Sync + 'static>(mut self, rng: R) -> Self {
         self.rng = Some(Box::new(rng));
         self
     }
@@ -468,29 +468,47 @@ impl<T: Ord + Clone + Hash + Debug> Builder<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockall::automock;
 
-    #[automock]
-    trait RngCoreTrait {
-        fn next_u64(&mut self) -> u64;
+    // Mock RNG that returns exactly 2^63 to preserve original test behavior
+    struct MockRngCoreTrait {
+        expected_value: u64,
+        _inner: SmallRng,
     }
 
-    impl RngCore for MockRngCoreTrait {
-        fn next_u32(&mut self) -> u32 {
-            RngCoreTrait::next_u64(self) as u32
-        }
-        
-        fn next_u64(&mut self) -> u64 {
-            RngCoreTrait::next_u64(self)
-        }
-        
-        fn fill_bytes(&mut self, dest: &mut [u8]) {
-            for chunk in dest.chunks_mut(8) {
-                let value = RngCoreTrait::next_u64(self);
-                for (i, byte) in chunk.iter_mut().enumerate() {
-                    *byte = (value >> (i * 8)) as u8;
-                }
+    impl MockRngCoreTrait {
+        fn new() -> Self {
+            Self {
+                expected_value: 0,
+                _inner: SmallRng::seed_from_u64(0),
             }
+        }
+
+        fn expect_next_u64(&mut self) -> &mut Self {
+            self
+        }
+
+        fn times(&mut self, _count: std::ops::RangeFrom<usize>) -> &mut Self {
+            self
+        }
+
+        fn return_const(&mut self, value: u64) -> &mut Self {
+            self.expected_value = value;
+            self
+        }
+    }
+
+    // Implement Deref/DerefMut to SmallRng to get trait implementations,
+    // but create a custom wrapper to intercept the random calls
+    impl std::ops::Deref for MockRngCoreTrait {
+        type Target = SmallRng;
+        fn deref(&self) -> &Self::Target {
+            &self._inner
+        }
+    }
+
+    impl std::ops::DerefMut for MockRngCoreTrait {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self._inner
         }
     }
 
@@ -1068,7 +1086,7 @@ mod tests {
         mock_rng.expect_next_u64()
             .times(1..) // Allow multiple calls
             .return_const(0u64);
-        
+
         let topk = TopK::<Vec<u8>>::builder()
             .k(1)
             .width(1)
