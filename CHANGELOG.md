@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.2...v0.6.3) - 2026-02-21
+
+### Other
+
+- *(deps)* update mockall requirement from 0.13 to 0.14
+- Merge pull request #61 from pmcgleenon/dependabot/github_actions/actions/checkout-6
+- *(deps)* update criterion requirement from 0.7.0 to 0.8.2
+
 ## [0.6.2](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.1...v0.6.2) - 2025-11-19
 
 ### Other
