@@ -42,6 +42,26 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
         self.items.get(item).map(|(count, _)| *count)
     }
 
+    /// Increase an existing entry's count. Caller must guarantee the new count
+    /// is >= the current count (paper Algorithm 1: heap is max(maxv, existing)).
+    pub(crate) fn update_if_present<Q>(&mut self, item: &Q, count: u64) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        if let Some((old_count, pos)) = self.items.get_mut(item) {
+            debug_assert!(count >= *old_count, "update_if_present must not decrease");
+            if count == *old_count { return true; }
+            *old_count = count;
+            let pos = *pos;
+            self.heap[pos].0 = count;
+            self.sift_down(pos);
+            true
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn min_count(&self) -> u64 {
         // If heap is empty, return 0
         // Otherwise return count from root node (index 0)

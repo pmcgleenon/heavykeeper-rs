@@ -43,6 +43,10 @@ for node in topk.list() {
 }
 ```
 
+# Experimental: `BucketedTopK`
+
+Variant that hashes once per insert into a single bucket of `depth` cells with a linear fingerprint scan. Roughly 2× insert throughput vs `TopK` on Zipf and uniform streams. Not the paper's algorithm and its accuracy bounds do not apply. API mirrors `TopK`. Use when insert throughput dominates.
+
 # Other Implementations
 
 | Name                       | Language | Github Repo                                                                  |
