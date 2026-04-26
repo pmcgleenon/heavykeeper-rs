@@ -33,6 +33,7 @@ criterion = "0.8.2"
 mockall = "0.14"
 clap = { version = "4.5.19", features = ["derive"] }
 memmap2 = "0.9.5"
+rand_distr = "0.5"
 
 [[bench]]
 name = "topk_add"
@@ -40,4 +41,8 @@ harness = false
 
 [[bench]]
 name = "topk_list"
+harness = false
+
+[[bench]]
+name = "topk_vs_bucketed"
 harness = false

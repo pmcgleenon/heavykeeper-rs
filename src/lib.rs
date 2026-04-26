@@ -8,5 +8,8 @@
 mod heavykeeper;
 pub use heavykeeper::TopK;
 
+mod bucketed;
+pub use bucketed::{BucketedTopK, BucketedMergeError, BucketedBuilderError};
+
 mod priority_queue;
 mod hash_composition;
