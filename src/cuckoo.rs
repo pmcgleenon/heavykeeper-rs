@@ -406,15 +406,23 @@ impl<T: Ord + Clone + Hash + Debug> CuckooTopK<T> {
         }
 
         // Walk other's heavy cells; re-insert each fingerprint into self's
-        // candidate buckets via cuckoo semantics.
+        // candidate buckets via cuckoo semantics. If the same fingerprint
+        // is currently in self's lobby for that primary bucket, fold its
+        // count in and clear the lobby — an item should live in heavy XOR
+        // lobby, never both.
         for o_idx in 0..other.heavy.len() {
             let oc = other.heavy[o_idx];
             if oc.count == 0 {
                 continue;
             }
             let fp = oc.fingerprint;
-            let count = oc.count;
+            let mut count = oc.count;
             let (primary, alternate) = self.bucket_pair(fp);
+
+            if self.lobbies[primary].count > 0 && self.lobbies[primary].fingerprint == fp {
+                count = count.saturating_add(self.lobbies[primary].count);
+                self.lobbies[primary] = Cell::default();
+            }
 
             if let Some(idx) = self.find_heavy(fp, primary, alternate) {
                 self.heavy[idx].count = self.heavy[idx].count.saturating_add(count);
@@ -451,7 +459,10 @@ impl<T: Ord + Clone + Hash + Debug> CuckooTopK<T> {
             // else: count too low to evict, drop.
         }
 
-        // Walk other's lobbies; resolve conflicts deterministically.
+        // Walk other's lobbies. If the fingerprint is already heavy in
+        // self (via either candidate bucket), fold the lobby count into
+        // the heavy entry. Otherwise resolve lobby-vs-lobby conflicts
+        // deterministically.
         for o_idx in 0..other.lobbies.len() {
             let oc = other.lobbies[o_idx];
             if oc.count == 0 {
@@ -459,9 +470,14 @@ impl<T: Ord + Clone + Hash + Debug> CuckooTopK<T> {
             }
             let fp = oc.fingerprint;
             let count = oc.count;
-            let primary = self.bucket_index(fp);
-            let lobby = self.lobbies[primary];
+            let (primary, alternate) = self.bucket_pair(fp);
 
+            if let Some(idx) = self.find_heavy(fp, primary, alternate) {
+                self.heavy[idx].count = self.heavy[idx].count.saturating_add(count);
+                continue;
+            }
+
+            let lobby = self.lobbies[primary];
             if lobby.count > 0 && lobby.fingerprint == fp {
                 self.lobbies[primary].count = lobby.count.saturating_add(count);
             } else if lobby.count == 0 || count > lobby.count {
@@ -664,10 +680,13 @@ impl<T: Ord + Clone + Hash + Debug> CuckooTopK<T> {
         let tbl = &self.decay_thresholds;
         let last = tbl[tbl.len() - 1] as f64 / u64::MAX as f64;
         let divisor = (tbl.len() - 1) as u64;
-        let q = count / divisor;
+        // q is u64 — use powf(q as f64) instead of powi(q as i32) which
+        // would truncate (not saturate) for q > i32::MAX and produce a
+        // negative exponent, sending threshold to ∞ for very-hot keys.
+        let q = (count / divisor) as f64;
         let r = (count % divisor) as usize;
         let rem_thr = tbl[r] as f64 / u64::MAX as f64;
-        ((last.powi(q as i32) * rem_thr) * u64::MAX as f64) as u64
+        ((last.powf(q) * rem_thr) * u64::MAX as f64) as u64
     }
 
     fn update_priority_queue<Q>(&mut self, item: &Q, count: u64)
@@ -1147,6 +1166,42 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_folds_other_lobby_into_self_heavy() {
+        // self has x heavy with a high count; other has x in lobby.
+        // The lobby contribution from other must fold into self's heavy
+        // entry — not be written into self.lobbies alongside it (where
+        // bucket_count() would miss it because it short-circuits on
+        // heavy hits).
+        let mut a: CuckooTopK<Vec<u8>> = CuckooTopK::with_seed(10, 1, 1, 0.9, 1);
+        let mut b: CuckooTopK<Vec<u8>> = CuckooTopK::with_seed(10, 1, 1, 0.9, 1);
+
+        a.add(&b"x".to_vec(), 1000);
+        b.add(&b"y".to_vec(), 200); // fills b's heavy slot
+        b.add(&b"x".to_vec(), 5); // forced into b's lobby
+
+        a.merge(&b).expect("compatible");
+
+        assert_eq!(a.bucket_count(&b"x".to_vec()), 1005);
+    }
+
+    #[test]
+    fn test_merge_folds_self_lobby_into_incoming_heavy() {
+        // self has x in lobby; other has x heavy. Heavy walk must fold
+        // self's lobby contribution into the incoming count and clear
+        // the lobby so x lives in heavy XOR lobby, never both.
+        let mut a: CuckooTopK<Vec<u8>> = CuckooTopK::with_seed(10, 1, 1, 0.9, 1);
+        let mut b: CuckooTopK<Vec<u8>> = CuckooTopK::with_seed(10, 1, 1, 0.9, 1);
+
+        a.add(&b"y".to_vec(), 200); // fills a's heavy slot
+        a.add(&b"x".to_vec(), 5); // forced into a's lobby
+        b.add(&b"x".to_vec(), 1000);
+
+        a.merge(&b).expect("compatible");
+
+        assert_eq!(a.bucket_count(&b"x".to_vec()), 1005);
+    }
+
+    #[test]
     fn test_merge_priority_queue_reflects_summed_counts() {
         let mut a: CuckooTopK<Vec<u8>> = CuckooTopK::new(3, 64, 4, 0.9);
         let mut b: CuckooTopK<Vec<u8>> = CuckooTopK::new(3, 64, 4, 0.9);
@@ -1184,6 +1239,23 @@ mod tests {
         // (decay^4_billion underflows to ~0).
         let topk: CuckooTopK<Vec<u8>> = CuckooTopK::new(10, 64, 4, 0.9);
         let huge: u64 = (u32::MAX as u64) + 5000;
+        let thr = topk.decay_threshold_for_test(huge);
+        assert!(
+            thr < u64::MAX / 2,
+            "expected ~0 threshold for huge count, got {thr}"
+        );
+    }
+
+    #[test]
+    fn test_decay_threshold_no_powi_i32_overflow_for_huge_count() {
+        // `q = count / 1023` once exceeded i32::MAX, casting to i32
+        // truncated (not saturated) and produced a negative exponent —
+        // `powi(neg_huge)` of a fractional base diverges to ∞ and the
+        // threshold saturated to u64::MAX (always decay) instead of 0
+        // (never decay). Ensure huge counts still produce a tiny threshold.
+        let topk: CuckooTopK<Vec<u8>> = CuckooTopK::new(10, 64, 4, 0.9);
+        // q = huge / 1023 well past i32::MAX (~2.15e9).
+        let huge: u64 = (i32::MAX as u64) * 2048;
         let thr = topk.decay_threshold_for_test(huge);
         assert!(
             thr < u64::MAX / 2,

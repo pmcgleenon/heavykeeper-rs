@@ -73,7 +73,7 @@ fn read_in_traces(
             *counter += 1;
             count += 1;
 
-            if count >= max_item_num {
+            if count > max_item_num {
                 panic!(
                     "The dataset has more than {} items, set a larger value for max_item_num",
                     max_item_num

@@ -433,10 +433,12 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
         let tbl = &self.decay_thresholds;
         let last = tbl[tbl.len() - 1] as f64 / u64::MAX as f64;
         let divisor = (tbl.len() - 1) as u64;
-        let q = count / divisor;
+        // q is u64 — use powf(q as f64) instead of powi(q as i32) which
+        // would truncate (not saturate) for q > i32::MAX.
+        let q = (count / divisor) as f64;
         let r = (count % divisor) as usize;
         let rem_thr = tbl[r] as f64 / u64::MAX as f64;
-        ((last.powi(q as i32) * rem_thr) * u64::MAX as f64) as u64
+        ((last.powf(q) * rem_thr) * u64::MAX as f64) as u64
     }
 }
 
@@ -985,6 +987,20 @@ mod tests {
         let huge: u64 = (u32::MAX as u64) + 5000;
         let thr = topk.decay_threshold_for_test(huge);
         // A buggy 32-bit truncation would return ~u64::MAX (a small lookup index).
+        assert!(
+            thr < u64::MAX / 2,
+            "expected ~0 threshold for huge count, got {thr}"
+        );
+    }
+
+    #[test]
+    fn test_decay_threshold_no_powi_i32_overflow_for_huge_count() {
+        // `q = count / 1023` past i32::MAX would truncate (not saturate)
+        // to a negative i32; `powi(neg)` of a fractional base diverges
+        // and the threshold saturates to u64::MAX. Use powf instead.
+        let topk: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 64, 4, 0.9);
+        let huge: u64 = (i32::MAX as u64) * 2048;
+        let thr = topk.decay_threshold_for_test(huge);
         assert!(
             thr < u64::MAX / 2,
             "expected ~0 threshold for huge count, got {thr}"
