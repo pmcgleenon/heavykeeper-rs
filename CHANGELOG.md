@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.3...v0.6.4) - 2026-05-10
+
+### Added
+
+- add CuckooTopK variant
+
+### Fixed
+
+- address CodeRabbit review on PR #70
+
 ## [0.6.3](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.2...v0.6.3) - 2026-04-26
 
 ### Added
