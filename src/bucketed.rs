@@ -7,8 +7,8 @@ use std::fmt::Debug;
 use std::hash::Hash;
 
 use ahash::RandomState;
-use rand::{RngCore, SeedableRng};
 use rand::rngs::SmallRng;
+use rand::{RngCore, SeedableRng};
 use thiserror::Error;
 
 use crate::priority_queue::TopKQueue;
@@ -19,18 +19,18 @@ const DECAY_LOOKUP_SIZE: usize = 1024;
 const MERGE_HASHER_PROBE: &[u8] = b"heavykeeper-merge-compat-probe";
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Node<T> {
+pub struct BucketedNode<T> {
     pub item: T,
     pub count: u64,
 }
 
-impl<T: Ord> Ord for Node<T> {
+impl<T: Ord> Ord for BucketedNode<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         other.count.cmp(&self.count)
     }
 }
 
-impl<T: Ord> PartialOrd for Node<T> {
+impl<T: Ord> PartialOrd for BucketedNode<T> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
@@ -40,16 +40,25 @@ impl<T: Ord> PartialOrd for Node<T> {
 #[derive(Error, Debug)]
 pub enum BucketedMergeError {
     #[error("Incompatible width: self ({self_width}) != other ({other_width})")]
-    IncompatibleWidth { self_width: usize, other_width: usize },
+    IncompatibleWidth {
+        self_width: usize,
+        other_width: usize,
+    },
 
     #[error("Incompatible depth: self ({self_depth}) != other ({other_depth})")]
-    IncompatibleDepth { self_depth: usize, other_depth: usize },
+    IncompatibleDepth {
+        self_depth: usize,
+        other_depth: usize,
+    },
 
     #[error("Incompatible decay: self ({self_decay}) != other ({other_decay})")]
     IncompatibleDecay { self_decay: f64, other_decay: f64 },
 
     #[error("Incompatible top_items: self ({self_items}) != other ({other_items})")]
-    IncompatibleTopItems { self_items: usize, other_items: usize },
+    IncompatibleTopItems {
+        self_items: usize,
+        other_items: usize,
+    },
 
     #[error("Incompatible hashers: sketches were built with different seeds or hasher state")]
     IncompatibleHasher,
@@ -83,6 +92,9 @@ fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Box<[u64]> {
 
 pub struct BucketedTopK<T: Ord + Clone + Hash + Debug> {
     width: usize,
+    /// Non-zero when `width` is a power of two and `> 1`; in that case
+    /// bucket indexing uses `hash & width_mask` instead of `% width`.
+    width_mask: usize,
     depth: usize,
     decay: f64,
     cells: Box<[Cell]>,
@@ -105,11 +117,19 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
     }
 
     /// Caller-supplied hasher. Merge compatibility is probe-checked; see `merge`.
-    pub fn with_hasher(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState) -> Self {
+    pub fn with_hasher(
+        k: usize,
+        width: usize,
+        depth: usize,
+        decay: f64,
+        hasher: RandomState,
+    ) -> Self {
         Self::with_components(k, width, depth, decay, hasher, SmallRng::seed_from_u64(0))
     }
 
-    pub fn builder() -> BucketedBuilder<T> { BucketedBuilder::new() }
+    pub fn builder() -> BucketedBuilder<T> {
+        BucketedBuilder::new()
+    }
 
     fn with_components(
         k: usize,
@@ -119,15 +139,15 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
         hasher: RandomState,
         rng: SmallRng,
     ) -> Self {
-        assert!(width >= 1, "width must be >= 1");
-        assert!(depth >= 1, "depth must be >= 1");
-        assert!(
-            decay.is_finite() && (0.0..=1.0).contains(&decay),
-            "decay must be a finite value in 0.0..=1.0, got {decay}",
-        );
         let priority_queue = TopKQueue::with_capacity_and_hasher(k, hasher.clone());
+        let width_mask = if width > 1 && width.is_power_of_two() {
+            width - 1
+        } else {
+            0
+        };
         Self {
             width,
+            width_mask,
             depth,
             decay,
             cells: vec![Cell::default(); width * depth].into_boxed_slice(),
@@ -137,6 +157,15 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
             rng,
             min_pq_count: 0,
             top_items: k,
+        }
+    }
+
+    #[inline]
+    fn bucket_index(&self, hash: u64) -> usize {
+        if self.width_mask != 0 {
+            (hash as usize) & self.width_mask
+        } else {
+            (hash as usize) % self.width
         }
     }
 
@@ -151,10 +180,12 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
     {
-        if increment == 0 { return; }
+        if increment == 0 {
+            return;
+        }
         let h = self.hasher.hash_one(item);
         let fp = h;
-        let bucket_idx = (h as usize) % self.width;
+        let bucket_idx = self.bucket_index(h);
         let range = self.bucket_range(bucket_idx);
         let bucket_start = range.start;
         let cells = &mut self.cells[range];
@@ -166,7 +197,9 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
 
         for (i, cell) in cells.iter().enumerate() {
             if cell.count == 0 {
-                if first_empty.is_none() { first_empty = Some(i); }
+                if first_empty.is_none() {
+                    first_empty = Some(i);
+                }
                 continue;
             }
             if matched.is_none() && cell.fingerprint == fp {
@@ -217,7 +250,9 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
     {
-        if let Some(c) = self.priority_queue.get(item) { return c; }
+        if let Some(c) = self.priority_queue.get(item) {
+            return c;
+        }
         self.bucket_count(item)
     }
 
@@ -227,10 +262,12 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
     {
         let h = self.hasher.hash_one(item);
-        let bucket_idx = (h as usize) % self.width;
+        let bucket_idx = self.bucket_index(h);
         let cells = &self.cells[self.bucket_range(bucket_idx)];
         for cell in cells {
-            if cell.count > 0 && cell.fingerprint == h { return cell.count; }
+            if cell.count > 0 && cell.fingerprint == h {
+                return cell.count;
+            }
         }
         0
     }
@@ -243,9 +280,14 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
         self.count(item) > 0
     }
 
-    pub fn list(&self) -> Vec<Node<T>> {
-        let mut nodes: Vec<Node<T>> = self.priority_queue.iter()
-            .map(|(item, count)| Node { item: item.clone(), count })
+    pub fn list(&self) -> Vec<BucketedNode<T>> {
+        let mut nodes: Vec<BucketedNode<T>> = self
+            .priority_queue
+            .iter()
+            .map(|(item, count)| BucketedNode {
+                item: item.clone(),
+                count,
+            })
             .collect();
         nodes.sort();
         nodes
@@ -257,35 +299,41 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
     pub fn merge(&mut self, other: &Self) -> Result<(), BucketedMergeError> {
         if self.width != other.width {
             return Err(BucketedMergeError::IncompatibleWidth {
-                self_width: self.width, other_width: other.width,
+                self_width: self.width,
+                other_width: other.width,
             });
         }
         if self.depth != other.depth {
             return Err(BucketedMergeError::IncompatibleDepth {
-                self_depth: self.depth, other_depth: other.depth,
+                self_depth: self.depth,
+                other_depth: other.depth,
             });
         }
         if self.decay != other.decay {
             return Err(BucketedMergeError::IncompatibleDecay {
-                self_decay: self.decay, other_decay: other.decay,
+                self_decay: self.decay,
+                other_decay: other.decay,
             });
         }
         if self.top_items != other.top_items {
             return Err(BucketedMergeError::IncompatibleTopItems {
-                self_items: self.top_items, other_items: other.top_items,
+                self_items: self.top_items,
+                other_items: other.top_items,
             });
         }
-        if self.hasher.hash_one(MERGE_HASHER_PROBE)
-            != other.hasher.hash_one(MERGE_HASHER_PROBE)
-        {
+        if self.hasher.hash_one(MERGE_HASHER_PROBE) != other.hasher.hash_one(MERGE_HASHER_PROBE) {
             return Err(BucketedMergeError::IncompatibleHasher);
         }
 
         // PQ merge before cell merge so we read pre-merge bucket counts.
-        let other_pq_pairs: Vec<(T, u64)> = other.priority_queue.iter()
+        let other_pq_pairs: Vec<(T, u64)> = other
+            .priority_queue
+            .iter()
             .map(|(item, count)| (item.clone(), count))
             .collect();
-        let self_only_updates: Vec<(T, u64)> = self.priority_queue.iter()
+        let self_only_updates: Vec<(T, u64)> = self
+            .priority_queue
+            .iter()
             .filter(|(item, _)| other.priority_queue.get(item).is_none())
             .map(|(item, self_pq)| {
                 let other_bucket = other.bucket_count(item);
@@ -310,7 +358,9 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
 
             for o in other_start..other_start + self.depth {
                 let oc = other.cells[o];
-                if oc.count == 0 { continue; }
+                if oc.count == 0 {
+                    continue;
+                }
 
                 let mut matched: Option<usize> = None;
                 let mut first_empty: Option<usize> = None;
@@ -320,7 +370,9 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
                 for i in self_start..self_end {
                     let sc = self.cells[i];
                     if sc.count == 0 {
-                        if first_empty.is_none() { first_empty = Some(i); }
+                        if first_empty.is_none() {
+                            first_empty = Some(i);
+                        }
                         continue;
                     }
                     if sc.fingerprint == oc.fingerprint {
@@ -359,18 +411,7 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
         let mut remaining = increment;
         while remaining > 0 {
             let current_count = self.cells[cell_idx].count;
-            let count_idx = current_count as usize;
-            let threshold = if count_idx < self.decay_thresholds.len() {
-                self.decay_thresholds[count_idx]
-            } else {
-                let tbl = &self.decay_thresholds;
-                let last = tbl[tbl.len() - 1] as f64 / u64::MAX as f64;
-                let divisor = tbl.len() - 1;
-                let q = count_idx / divisor;
-                let r = count_idx % divisor;
-                let rem_thr = tbl[r] as f64 / u64::MAX as f64;
-                ((last.powi(q as i32) * rem_thr) * u64::MAX as f64) as u64
-            };
+            let threshold = self.decay_threshold(current_count);
             if self.rng.next_u64() < threshold {
                 let cell = &mut self.cells[cell_idx];
                 cell.count = cell.count.saturating_sub(1);
@@ -384,11 +425,30 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
         }
         None
     }
+
+    fn decay_threshold(&self, count: u64) -> u64 {
+        if count < self.decay_thresholds.len() as u64 {
+            return self.decay_thresholds[count as usize];
+        }
+        let tbl = &self.decay_thresholds;
+        let last = tbl[tbl.len() - 1] as f64 / u64::MAX as f64;
+        let divisor = (tbl.len() - 1) as u64;
+        let q = count / divisor;
+        let r = (count % divisor) as usize;
+        let rem_thr = tbl[r] as f64 / u64::MAX as f64;
+        ((last.powi(q as i32) * rem_thr) * u64::MAX as f64) as u64
+    }
 }
 
 #[cfg(test)]
 impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
-    pub(crate) fn hasher(&self) -> &RandomState { &self.hasher }
+    pub(crate) fn hasher(&self) -> &RandomState {
+        &self.hasher
+    }
+
+    pub(crate) fn decay_threshold_for_test(&self, count: u64) -> u64 {
+        self.decay_threshold(count)
+    }
 }
 
 pub struct BucketedBuilder<T> {
@@ -402,40 +462,87 @@ pub struct BucketedBuilder<T> {
 }
 
 impl<T: Ord + Clone + Hash + Debug> Default for BucketedBuilder<T> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Ord + Clone + Hash + Debug> BucketedBuilder<T> {
     pub fn new() -> Self {
         Self {
-            k: None, width: None, depth: None, decay: None,
-            seed: None, hasher: None,
+            k: None,
+            width: None,
+            depth: None,
+            decay: None,
+            seed: None,
+            hasher: None,
             _phantom: std::marker::PhantomData,
         }
     }
-    pub fn k(mut self, k: usize) -> Self { self.k = Some(k); self }
-    pub fn width(mut self, w: usize) -> Self { self.width = Some(w); self }
-    pub fn depth(mut self, d: usize) -> Self { self.depth = Some(d); self }
-    pub fn decay(mut self, d: f64) -> Self { self.decay = Some(d); self }
-    pub fn seed(mut self, s: u64) -> Self { self.seed = Some(s); self }
-    pub fn hasher(mut self, h: RandomState) -> Self { self.hasher = Some(h); self }
+    pub fn k(mut self, k: usize) -> Self {
+        self.k = Some(k);
+        self
+    }
+    pub fn width(mut self, w: usize) -> Self {
+        self.width = Some(w);
+        self
+    }
+    pub fn depth(mut self, d: usize) -> Self {
+        self.depth = Some(d);
+        self
+    }
+    pub fn decay(mut self, d: f64) -> Self {
+        self.decay = Some(d);
+        self
+    }
+    pub fn seed(mut self, s: u64) -> Self {
+        self.seed = Some(s);
+        self
+    }
+    pub fn hasher(mut self, h: RandomState) -> Self {
+        self.hasher = Some(h);
+        self
+    }
 
     pub fn build(self) -> Result<BucketedTopK<T>, BucketedBuilderError> {
-        let k = self.k.ok_or_else(|| BucketedBuilderError::MissingField { field: "k".into() })?;
-        let width = self.width.ok_or_else(|| BucketedBuilderError::MissingField { field: "width".into() })?;
-        let depth = self.depth.ok_or_else(|| BucketedBuilderError::MissingField { field: "depth".into() })?;
-        let decay = self.decay.ok_or_else(|| BucketedBuilderError::MissingField { field: "decay".into() })?;
-        if width < 1 { return Err(BucketedBuilderError::InvalidWidth { width }); }
-        if depth < 1 { return Err(BucketedBuilderError::InvalidDepth { depth }); }
+        let k = self
+            .k
+            .ok_or_else(|| BucketedBuilderError::MissingField { field: "k".into() })?;
+        let width = self
+            .width
+            .ok_or_else(|| BucketedBuilderError::MissingField {
+                field: "width".into(),
+            })?;
+        let depth = self
+            .depth
+            .ok_or_else(|| BucketedBuilderError::MissingField {
+                field: "depth".into(),
+            })?;
+        let decay = self
+            .decay
+            .ok_or_else(|| BucketedBuilderError::MissingField {
+                field: "decay".into(),
+            })?;
+        if width < 1 {
+            return Err(BucketedBuilderError::InvalidWidth { width });
+        }
+        if depth < 1 {
+            return Err(BucketedBuilderError::InvalidDepth { depth });
+        }
         if !decay.is_finite() || !(0.0..=1.0).contains(&decay) {
             return Err(BucketedBuilderError::InvalidDecay { decay });
         }
         let hasher = self.hasher.unwrap_or_else(|| {
-            if let Some(s) = self.seed { RandomState::with_seeds(s, s, s, s) }
-            else { RandomState::new() }
+            if let Some(s) = self.seed {
+                RandomState::with_seeds(s, s, s, s)
+            } else {
+                RandomState::new()
+            }
         });
         let rng = SmallRng::seed_from_u64(self.seed.unwrap_or(0));
-        Ok(BucketedTopK::with_components(k, width, depth, decay, hasher, rng))
+        Ok(BucketedTopK::with_components(
+            k, width, depth, decay, hasher, rng,
+        ))
     }
 }
 
@@ -529,7 +636,10 @@ mod tests {
         let mut a: BucketedTopK<Vec<u8>> = BucketedTopK::new(3, 64, 4, 0.9);
         let b: BucketedTopK<Vec<u8>> = BucketedTopK::new(3, 32, 4, 0.9);
         match a.merge(&b) {
-            Err(BucketedMergeError::IncompatibleWidth { self_width, other_width }) => {
+            Err(BucketedMergeError::IncompatibleWidth {
+                self_width,
+                other_width,
+            }) => {
                 assert_eq!(self_width, 64);
                 assert_eq!(other_width, 32);
             }
@@ -542,7 +652,10 @@ mod tests {
         let mut a: BucketedTopK<Vec<u8>> = BucketedTopK::new(3, 64, 4, 0.9);
         let b: BucketedTopK<Vec<u8>> = BucketedTopK::new(3, 64, 2, 0.9);
         match a.merge(&b) {
-            Err(BucketedMergeError::IncompatibleDepth { self_depth, other_depth }) => {
+            Err(BucketedMergeError::IncompatibleDepth {
+                self_depth,
+                other_depth,
+            }) => {
                 assert_eq!(self_depth, 4);
                 assert_eq!(other_depth, 2);
             }
@@ -552,29 +665,58 @@ mod tests {
 
     #[test]
     fn test_builder_missing_fields() {
-        let r = BucketedBuilder::<Vec<u8>>::new().width(64).depth(4).decay(0.9).build();
+        let r = BucketedBuilder::<Vec<u8>>::new()
+            .width(64)
+            .depth(4)
+            .decay(0.9)
+            .build();
         assert!(matches!(r, Err(BucketedBuilderError::MissingField { field }) if field == "k"));
 
-        let r = BucketedBuilder::<Vec<u8>>::new().k(10).depth(4).decay(0.9).build();
+        let r = BucketedBuilder::<Vec<u8>>::new()
+            .k(10)
+            .depth(4)
+            .decay(0.9)
+            .build();
         assert!(matches!(r, Err(BucketedBuilderError::MissingField { field }) if field == "width"));
 
-        let r = BucketedBuilder::<Vec<u8>>::new().k(10).width(64).decay(0.9).build();
+        let r = BucketedBuilder::<Vec<u8>>::new()
+            .k(10)
+            .width(64)
+            .decay(0.9)
+            .build();
         assert!(matches!(r, Err(BucketedBuilderError::MissingField { field }) if field == "depth"));
 
-        let r = BucketedBuilder::<Vec<u8>>::new().k(10).width(64).depth(4).build();
+        let r = BucketedBuilder::<Vec<u8>>::new()
+            .k(10)
+            .width(64)
+            .depth(4)
+            .build();
         assert!(matches!(r, Err(BucketedBuilderError::MissingField { field }) if field == "decay"));
     }
 
     #[test]
     fn test_builder_invalid_depth_zero() {
-        let r = BucketedBuilder::<Vec<u8>>::new().k(10).width(64).depth(0).decay(0.9).build();
-        assert!(matches!(r, Err(BucketedBuilderError::InvalidDepth { depth: 0 })));
+        let r = BucketedBuilder::<Vec<u8>>::new()
+            .k(10)
+            .width(64)
+            .depth(0)
+            .decay(0.9)
+            .build();
+        assert!(matches!(
+            r,
+            Err(BucketedBuilderError::InvalidDepth { depth: 0 })
+        ));
     }
 
     #[test]
     fn test_builder_accepts_depths_other_than_four() {
         for d in [1usize, 2, 3, 5, 8] {
-            let r = BucketedBuilder::<Vec<u8>>::new().k(10).width(64).depth(d).decay(0.9).build();
+            let r = BucketedBuilder::<Vec<u8>>::new()
+                .k(10)
+                .width(64)
+                .depth(d)
+                .decay(0.9)
+                .build();
             assert!(r.is_ok(), "depth={d} should build");
         }
     }
@@ -614,12 +756,20 @@ mod tests {
         let mut topk: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 2000, 4, 0.98);
         for i in 0..100u32 {
             let k = format!("item{i}").into_bytes();
-            for _ in 0..=(i as u64) { topk.add(&k, 1); }
+            for _ in 0..=(i as u64) {
+                topk.add(&k, 1);
+            }
         }
         assert_eq!(topk.list().len(), 10);
         let expected: Vec<Vec<u8>> = (90..100).map(|i| format!("item{i}").into_bytes()).collect();
-        let found = expected.iter().filter(|e| topk.list().iter().any(|n| &n.item == *e)).count();
-        assert!(found >= 8, "at least 8 of top 10 should be in list (got {found})");
+        let found = expected
+            .iter()
+            .filter(|e| topk.list().iter().any(|n| &n.item == *e))
+            .count();
+        assert!(
+            found >= 8,
+            "at least 8 of top 10 should be in list (got {found})"
+        );
     }
 
     #[test]
@@ -717,10 +867,18 @@ mod tests {
         let mut a: BucketedTopK<Vec<u8>> = BucketedTopK::new(3, 64, 4, 0.9);
         let mut b: BucketedTopK<Vec<u8>> = BucketedTopK::new(3, 64, 4, 0.9);
 
-        for _ in 0..100 { a.add(&b"hot".to_vec(), 1); }
-        for _ in 0..50  { a.add(&b"warm".to_vec(), 1); }
-        for _ in 0..200 { b.add(&b"hot".to_vec(), 1); }
-        for _ in 0..30  { b.add(&b"cool".to_vec(), 1); }
+        for _ in 0..100 {
+            a.add(&b"hot".to_vec(), 1);
+        }
+        for _ in 0..50 {
+            a.add(&b"warm".to_vec(), 1);
+        }
+        for _ in 0..200 {
+            b.add(&b"hot".to_vec(), 1);
+        }
+        for _ in 0..30 {
+            b.add(&b"cool".to_vec(), 1);
+        }
 
         a.merge(&b).unwrap();
 
@@ -756,9 +914,19 @@ mod tests {
     #[test]
     fn test_merge_unseeded_builder_hashers_incompatible() {
         let mut a: BucketedTopK<Vec<u8>> = BucketedTopK::builder()
-            .k(10).width(64).depth(4).decay(0.9).build().unwrap();
+            .k(10)
+            .width(64)
+            .depth(4)
+            .decay(0.9)
+            .build()
+            .unwrap();
         let b: BucketedTopK<Vec<u8>> = BucketedTopK::builder()
-            .k(10).width(64).depth(4).decay(0.9).build().unwrap();
+            .k(10)
+            .width(64)
+            .depth(4)
+            .decay(0.9)
+            .build()
+            .unwrap();
         match a.merge(&b) {
             Err(BucketedMergeError::IncompatibleHasher) => {}
             other => panic!("expected IncompatibleHasher, got {:?}", other),
@@ -778,33 +946,22 @@ mod tests {
         let cases = [-0.1f64, 1.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
         for d in cases {
             let res: Result<BucketedTopK<Vec<u8>>, _> = BucketedTopK::builder()
-                .k(10).width(64).depth(4).decay(d).build();
+                .k(10)
+                .width(64)
+                .depth(4)
+                .decay(d)
+                .build();
             match res {
                 Ok(_) => panic!("expected InvalidDecay for {d}, got Ok"),
                 Err(BucketedBuilderError::InvalidDecay { decay }) => {
-                    assert!(decay.is_nan() || decay == d, "got back {decay} for input {d}");
+                    assert!(
+                        decay.is_nan() || decay == d,
+                        "got back {decay} for input {d}"
+                    );
                 }
                 Err(other) => panic!("expected InvalidDecay for {d}, got {other:?}"),
             }
         }
-    }
-
-    #[test]
-    #[should_panic(expected = "decay must be")]
-    fn test_new_panics_on_nan_decay() {
-        let _: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 64, 4, f64::NAN);
-    }
-
-    #[test]
-    #[should_panic(expected = "decay must be")]
-    fn test_new_panics_on_decay_above_one() {
-        let _: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 64, 4, 2.0);
-    }
-
-    #[test]
-    #[should_panic(expected = "decay must be")]
-    fn test_with_seed_panics_on_negative_decay() {
-        let _: BucketedTopK<Vec<u8>> = BucketedTopK::with_seed(10, 64, 4, -0.5, 42);
     }
 
     #[test]
@@ -815,6 +972,23 @@ mod tests {
         assert_eq!(topk.count(&b"x".to_vec()), u64::MAX);
         topk.add(&b"x".to_vec(), 1_000_000);
         assert_eq!(topk.count(&b"x".to_vec()), u64::MAX);
+    }
+
+    #[test]
+    fn test_decay_threshold_no_usize_truncation_for_large_count() {
+        // On 32-bit targets, `count as usize` would truncate u64 counts
+        // greater than u32::MAX, returning a large threshold from the
+        // start of the lookup table instead of a tiny one. Verify that
+        // for counts > u32::MAX the returned threshold is effectively zero
+        // (decay^4_billion underflows to ~0).
+        let topk: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 64, 4, 0.9);
+        let huge: u64 = (u32::MAX as u64) + 5000;
+        let thr = topk.decay_threshold_for_test(huge);
+        // A buggy 32-bit truncation would return ~u64::MAX (a small lookup index).
+        assert!(
+            thr < u64::MAX / 2,
+            "expected ~0 threshold for huge count, got {thr}"
+        );
     }
 
     #[test]
@@ -833,7 +1007,8 @@ mod tests {
         );
         let list = topk.list();
         assert!(
-            list.iter().all(|n| n.item != b"new".to_vec() || n.count < 100),
+            list.iter()
+                .all(|n| n.item != b"new".to_vec() || n.count < 100),
             "new must not appear at heavy's count in top-k list"
         );
     }

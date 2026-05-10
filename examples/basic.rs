@@ -20,12 +20,14 @@ fn main() {
         println!("{}: {}", node.item, node.count);
     }
 
-    // Demonstrate the count() method 
+    // Demonstrate the count() method
     let item = "frequent item";
     println!("\nCount for '{}': {}", item, topk.count(item));
 
-    // Demonstrate the query() method 
-    println!("Is '{}' in top-k? {}", 
+    // Demonstrate the query() method
+    println!(
+        "Is '{}' in top-k? {}",
         item,
-        if topk.query(item) { "yes" } else { "no" });
+        if topk.query(item) { "yes" } else { "no" }
+    );
 }
