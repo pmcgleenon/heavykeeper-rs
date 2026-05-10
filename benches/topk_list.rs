@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use std::hint::black_box;
 use heavykeeper::TopK;
 use rand::prelude::*;
+use std::hint::black_box;
 
 // Benchmark TopK::list() to exercise TopKQueue::iter() with large k.
 fn benchmark_topk_list(c: &mut Criterion) {

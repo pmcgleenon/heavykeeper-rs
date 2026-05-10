@@ -1,13 +1,13 @@
+use crate::hash_composition::HashComposer;
+use crate::priority_queue::TopKQueue;
 use ahash::RandomState;
+use rand::rngs::SmallRng;
+use rand::{RngCore, SeedableRng};
 use std::borrow::Borrow;
 use std::clone::Clone;
 use std::fmt::Debug;
 use std::hash::Hash;
-use rand::{SeedableRng, RngCore};
-use rand::rngs::SmallRng;
 use thiserror::Error;
-use crate::priority_queue::TopKQueue;
-use crate::hash_composition::HashComposer;
 
 const DECAY_LOOKUP_SIZE: usize = 1024;
 
@@ -18,18 +18,18 @@ struct Bucket {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Node<T> {
+pub struct TopKNode<T> {
     pub item: T,
     pub count: u64,
 }
 
-impl<T: Ord> Ord for Node<T> {
+impl<T: Ord> Ord for TopKNode<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         other.count.cmp(&self.count) // Reverse ordering for min-heap
     }
 }
 
-impl<T: Ord> PartialOrd for Node<T> {
+impl<T: Ord> PartialOrd for TopKNode<T> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
@@ -43,19 +43,16 @@ pub enum HeavyKeeperError {
         self_width: usize,
         other_width: usize,
     },
-    
+
     #[error("Incompatible depth: self ({self_depth}) != other ({other_depth})")]
     IncompatibleDepth {
         self_depth: usize,
         other_depth: usize,
     },
-    
+
     #[error("Incompatible decay: self ({self_decay}) != other ({other_decay})")]
-    IncompatibleDecay {
-        self_decay: f64,
-        other_decay: f64,
-    },
-    
+    IncompatibleDecay { self_decay: f64, other_decay: f64 },
+
     #[error("Incompatible top_items: self ({self_items}) != other ({other_items})")]
     IncompatibleTopItems {
         self_items: usize,
@@ -72,6 +69,9 @@ pub enum BuilderError {
 pub struct TopK<T: Ord + Clone + Hash + Debug> {
     top_items: usize,
     width: usize,
+    /// Non-zero when `width` is a power of two and `> 1`; the bucket
+    /// index uses `hash & width_mask` instead of `% width`.
+    width_mask: usize,
     depth: usize,
     decay: f64,
     decay_thresholds: Vec<u64>,
@@ -120,20 +120,53 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         Self::with_hasher(k, width, depth, decay, hasher)
     }
 
-    pub fn with_hasher(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState) -> Self {
-        Self::with_components(k, width, depth, decay, hasher, Box::new(SmallRng::seed_from_u64(0)))
+    pub fn with_hasher(
+        k: usize,
+        width: usize,
+        depth: usize,
+        decay: f64,
+        hasher: RandomState,
+    ) -> Self {
+        Self::with_components(
+            k,
+            width,
+            depth,
+            decay,
+            hasher,
+            Box::new(SmallRng::seed_from_u64(0)),
+        )
     }
 
-    fn with_components(k: usize, width: usize, depth: usize, decay: f64, hasher: RandomState, rng: Box<dyn RngCore + Send + Sync>) -> Self {
+    fn with_components(
+        k: usize,
+        width: usize,
+        depth: usize,
+        decay: f64,
+        hasher: RandomState,
+        rng: Box<dyn RngCore + Send + Sync>,
+    ) -> Self {
         // Pre-allocate with capacity to avoid resizing
         let mut buckets = Vec::with_capacity(depth);
         for _ in 0..depth {
-            buckets.push(vec![Bucket { fingerprint: 0, count: 0 }; width]);
+            buckets.push(vec![
+                Bucket {
+                    fingerprint: 0,
+                    count: 0
+                };
+                width
+            ]);
         }
+
+        let width_mask = if width > 1 && width.is_power_of_two() {
+            width - 1
+        } else {
+            0
+        };
 
         Self {
             top_items: k,
             width,
+            width_mask,
             depth,
             decay,
             decay_thresholds: precompute_decay_thresholds(decay, DECAY_LOOKUP_SIZE),
@@ -157,7 +190,7 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         let mut min_count = u64::MAX;
 
         for i in 0..self.depth {
-            let bucket_idx = composer.next_bucket(self.width as u64, i);
+            let bucket_idx = composer.next_bucket(self.width as u64, self.width_mask, i);
             let bucket = &self.buckets[i][bucket_idx];
 
             if bucket.fingerprint == composer.fingerprint() {
@@ -181,7 +214,7 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         let mut min_count = u64::MAX;
 
         for i in 0..self.depth {
-            let bucket_idx = composer.next_bucket(self.width as u64, i);
+            let bucket_idx = composer.next_bucket(self.width as u64, self.width_mask, i);
             let bucket = &self.buckets[i][bucket_idx];
 
             if bucket.fingerprint == composer.fingerprint() {
@@ -206,7 +239,7 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         let mut min_count = u64::MAX;
 
         for i in 0..self.depth {
-            let bucket_idx = composer.next_bucket(self.width as u64, i);
+            let bucket_idx = composer.next_bucket(self.width as u64, self.width_mask, i);
             let bucket = &self.buckets[i][bucket_idx];
 
             if bucket.fingerprint == composer.fingerprint() {
@@ -226,40 +259,35 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
     {
+        if increment == 0 {
+            return;
+        }
         let mut composer = HashComposer::new(&self.hasher, item);
         let mut max_count: u64 = 0;
 
         for i in 0..self.depth {
-            let bucket_idx = composer.next_bucket(self.width as u64, i);
-            let bucket = &mut self.buckets[i][bucket_idx];
+            let bucket_idx = composer.next_bucket(self.width as u64, self.width_mask, i);
 
-            let matches = bucket.fingerprint == composer.fingerprint();
-            let empty = bucket.count == 0u64;
-            
+            let (matches, empty) = {
+                let bucket = &self.buckets[i][bucket_idx];
+                (
+                    bucket.fingerprint == composer.fingerprint(),
+                    bucket.count == 0u64,
+                )
+            };
+
             if matches || empty {
+                let bucket = &mut self.buckets[i][bucket_idx];
                 bucket.fingerprint = composer.fingerprint();
                 bucket.count += increment;
                 max_count = std::cmp::max(max_count, bucket.count);
             } else {
                 let mut remaining_incr = increment;
                 while remaining_incr > 0 {
-                    let count_idx = bucket.count as usize;
-                    let decay_threshold = if count_idx < self.decay_thresholds.len() {
-                        self.decay_thresholds[count_idx]
-                    } else {
-
-                        let lookup_size = self.decay_thresholds.len();
-                        // Keep extrapolation normalized to the same [0,1] scale as precomputed thresholds.
-                        let base_threshold = self.decay_thresholds[lookup_size - 1] as f64 / u64::MAX as f64;
-                        let divisor = lookup_size - 1;
-                        let quotient = count_idx / divisor;
-                        let remainder = count_idx % divisor;
-                        let remainder_threshold = self.decay_thresholds[remainder] as f64 / u64::MAX as f64;
-                        let decay = base_threshold.powi(quotient as i32) * remainder_threshold;
-                        // Re-scale back into u64 range consistent with precomputed thresholds.
-                        (decay * u64::MAX as f64) as u64
-                    };
+                    let current_count = self.buckets[i][bucket_idx].count;
+                    let decay_threshold = self.decay_threshold(current_count);
                     let rand = self.random.next_u64();
+                    let bucket = &mut self.buckets[i][bucket_idx];
                     if rand < decay_threshold {
                         bucket.count = bucket.count.saturating_sub(1);
 
@@ -276,23 +304,47 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
             }
         }
 
-        // First check if queue is full - this is a cheap O(1) operation
-        if self.priority_queue.is_full() {
-            // Only check min_count if queue is full
-            if max_count < self.priority_queue.min_count() {
-                return;
+        // Paper Algorithm 1: heap value is max(maxv, existing_heap_value).
+        // Item already in PQ → only raise; sketch readings must not drag PQ down.
+        if let Some(current) = self.priority_queue.get(item) {
+            if max_count > current {
+                self.priority_queue.update_if_present(item, max_count);
             }
+            return;
+        }
+
+        if self.priority_queue.is_full() && max_count <= self.priority_queue.min_count() {
+            return;
         }
 
         // Clone the item here since we need to store it in the priority queue
         self.priority_queue.upsert(item.to_owned(), max_count);
     }
 
-    pub fn list(&self) -> Vec<Node<T>> {
-        let mut nodes = self.priority_queue.iter().map(|(item, count)| Node {
-            item: item.clone(),
-            count,
-        }).collect::<Vec<_>>();
+    fn decay_threshold(&self, count: u64) -> u64 {
+        if count < self.decay_thresholds.len() as u64 {
+            return self.decay_thresholds[count as usize];
+        }
+        let tbl = &self.decay_thresholds;
+        let last = tbl[tbl.len() - 1] as f64 / u64::MAX as f64;
+        let divisor = (tbl.len() - 1) as u64;
+        // q is u64 — use powf(q as f64) instead of powi(q as i32) which
+        // would truncate (not saturate) for q > i32::MAX.
+        let q = (count / divisor) as f64;
+        let r = (count % divisor) as usize;
+        let rem_thr = tbl[r] as f64 / u64::MAX as f64;
+        ((last.powf(q) * rem_thr) * u64::MAX as f64) as u64
+    }
+
+    pub fn list(&self) -> Vec<TopKNode<T>> {
+        let mut nodes = self
+            .priority_queue
+            .iter()
+            .map(|(item, count)| TopKNode {
+                item: item.clone(),
+                count,
+            })
+            .collect::<Vec<_>>();
         nodes.sort();
         nodes
     }
@@ -318,10 +370,14 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
             println!("Bucket at row {}, column {}: {:?}", i, j, bucket);
         }
         println!("priority_queue: ");
-        let mut nodes = self.priority_queue.iter().map(|(item, count)| Node {
-            item: item.clone(),
-            count,
-        }).collect::<Vec<_>>();
+        let mut nodes = self
+            .priority_queue
+            .iter()
+            .map(|(item, count)| TopKNode {
+                item: item.clone(),
+                count,
+            })
+            .collect::<Vec<_>>();
 
         nodes.sort();
         for node in nodes {
@@ -338,14 +394,14 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
                 other_width: other.width,
             });
         }
-        
+
         if self.depth != other.depth {
             return Err(HeavyKeeperError::IncompatibleDepth {
                 self_depth: self.depth,
                 other_depth: other.depth,
             });
         }
-        
+
         if self.decay != other.decay {
             return Err(HeavyKeeperError::IncompatibleDecay {
                 self_decay: self.decay,
@@ -381,6 +437,13 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+impl<T: Ord + Clone + Hash + Debug> TopK<T> {
+    pub(crate) fn decay_threshold_for_test(&self, count: u64) -> u64 {
+        self.decay_threshold(count)
     }
 }
 
@@ -440,10 +503,18 @@ impl<T: Ord + Clone + Hash + Debug> Builder<T> {
     }
 
     pub fn build(self) -> Result<TopK<T>, BuilderError> {
-        let k = self.k.ok_or_else(|| BuilderError::MissingField { field: "k".to_string() })?;
-        let width = self.width.ok_or_else(|| BuilderError::MissingField { field: "width".to_string() })?;
-        let depth = self.depth.ok_or_else(|| BuilderError::MissingField { field: "depth".to_string() })?;
-        let decay = self.decay.ok_or_else(|| BuilderError::MissingField { field: "decay".to_string() })?;
+        let k = self.k.ok_or_else(|| BuilderError::MissingField {
+            field: "k".to_string(),
+        })?;
+        let width = self.width.ok_or_else(|| BuilderError::MissingField {
+            field: "width".to_string(),
+        })?;
+        let depth = self.depth.ok_or_else(|| BuilderError::MissingField {
+            field: "depth".to_string(),
+        })?;
+        let decay = self.decay.ok_or_else(|| BuilderError::MissingField {
+            field: "decay".to_string(),
+        })?;
 
         let hasher = self.hasher.unwrap_or_else(|| {
             if let Some(seed) = self.seed {
@@ -479,11 +550,11 @@ mod tests {
         fn next_u32(&mut self) -> u32 {
             RngCoreTrait::next_u64(self) as u32
         }
-        
+
         fn next_u64(&mut self) -> u64 {
             RngCoreTrait::next_u64(self)
         }
-        
+
         fn fill_bytes(&mut self, dest: &mut [u8]) {
             for chunk in dest.chunks_mut(8) {
                 let value = RngCoreTrait::next_u64(self);
@@ -541,21 +612,33 @@ mod tests {
 
         // Add first item multiple times
         topk.add(&item1, 8);
-        assert_eq!(topk.count(&item1), 8, "Count should match number of additions");
+        assert_eq!(
+            topk.count(&item1),
+            8,
+            "Count should match number of additions"
+        );
 
         // Verify count for non-existent item
-        assert_eq!(topk.count(&item3), 0, "Non-existent item should have count 0");
+        assert_eq!(
+            topk.count(&item3),
+            0,
+            "Non-existent item should have count 0"
+        );
 
         // Add second item many times
         topk.add(&item2, 1337);
-        assert_eq!(topk.count(&item2), 1337, "Count should match number of additions");
+        assert_eq!(
+            topk.count(&item2),
+            1337,
+            "Count should match number of additions"
+        );
     }
 
     /// Tests support for non-ASCII characters and emoji
     #[test]
     fn test_non_ascii_and_emoji() {
         let mut topk: TopK<Vec<u8>> = TopK::new(5, 100, 4, 0.9);
-        
+
         // Test with Hindi text
         let p = "पुष्पं अस्ति।".as_bytes().to_vec();
         // Test with emoji
@@ -657,10 +740,14 @@ mod tests {
 
         assert_eq!(topk.priority_queue.len(), k, "Should have exactly k items");
 
-        let nodes = topk.priority_queue.iter().map(|(item, count)| Node {
-            item: item.clone(),
-            count,
-        }).collect::<Vec<_>>();
+        let nodes = topk
+            .priority_queue
+            .iter()
+            .map(|(item, count)| TopKNode {
+                item: item.clone(),
+                count,
+            })
+            .collect::<Vec<_>>();
 
         assert_eq!(nodes.len(), 2, "Should have exactly two items");
         assert_eq!(nodes[0].count, 7, "First item should have count 7");
@@ -744,7 +831,7 @@ mod tests {
     fn test_add_varied_input() {
         let k = 10; // Track top-10 items
         let width = 2000; // Increased width
-        let depth = 20;   // Increased depth
+        let depth = 20; // Increased depth
         let decay = 0.98; // Higher decay for more stability
 
         let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
@@ -773,23 +860,35 @@ mod tests {
         );
 
         // Print actual top-k for debugging
-        let top_items = topk.priority_queue.iter().map(|(item, count)| Node {
-            item: std::str::from_utf8(item).unwrap().to_string().into_bytes(),
-            count,
-        }).collect::<Vec<_>>();
+        let top_items = topk
+            .priority_queue
+            .iter()
+            .map(|(item, count)| TopKNode {
+                item: std::str::from_utf8(item).unwrap().to_string().into_bytes(),
+                count,
+            })
+            .collect::<Vec<_>>();
 
-        let expected_top_items = (90..100).map(|i| format!("item{}", i).into_bytes()).collect::<Vec<_>>();
+        let expected_top_items = (90..100)
+            .map(|i| format!("item{}", i).into_bytes())
+            .collect::<Vec<_>>();
 
         let mut found = 0;
         for expected_item in expected_top_items.iter() {
             if top_items.iter().any(|node| &node.item == expected_item) {
                 found += 1;
             } else {
-                println!("Warning: Expected item {} not in top-k", std::str::from_utf8(expected_item).unwrap());
+                println!(
+                    "Warning: Expected item {} not in top-k",
+                    std::str::from_utf8(expected_item).unwrap()
+                );
             }
         }
         // Allow at most 2 misses due to sketch randomness
-        assert!(found >= 8, "At least 8 of the top 10 items should be in top-k");
+        assert!(
+            found >= 8,
+            "At least 8 of the top 10 items should be in top-k"
+        );
     }
 
     /// Tests behavior with a large number of duplicates
@@ -808,7 +907,11 @@ mod tests {
         // Add the same item many times
         topk.add(&item, num_additions);
 
-        assert_eq!(topk.count(&item), num_additions, "Count should match number of additions");
+        assert_eq!(
+            topk.count(&item),
+            num_additions,
+            "Count should match number of additions"
+        );
     }
 
     /// Tests behavior with multiple distinct items
@@ -900,8 +1003,7 @@ mod tests {
         // Verify all items have the same frequency
         for node in topk.list() {
             assert_eq!(
-                node.count,
-                frequency,
+                node.count, frequency,
                 "All items should have the same frequency"
             );
         }
@@ -921,7 +1023,7 @@ mod tests {
         for i in 0..3 {
             let item = format!("item{}", i);
             let item_bytes = item.as_bytes().to_vec();
-            topk.add(&item_bytes, i+1);
+            topk.add(&item_bytes, i + 1);
         }
 
         // Verify priority queue size
@@ -932,12 +1034,18 @@ mod tests {
         );
 
         // Verify top-k items
-        let top_items = topk.priority_queue.iter().map(|(item, count)| Node {
-            item: std::str::from_utf8(item).unwrap().to_string().into_bytes(),
-            count,
-        }).collect::<Vec<_>>();
+        let top_items = topk
+            .priority_queue
+            .iter()
+            .map(|(item, count)| TopKNode {
+                item: std::str::from_utf8(item).unwrap().to_string().into_bytes(),
+                count,
+            })
+            .collect::<Vec<_>>();
 
-        let expected_top_items = (1..3).map(|i| format!("item{}", i).into_bytes()).collect::<Vec<_>>();
+        let expected_top_items = (1..3)
+            .map(|i| format!("item{}", i).into_bytes())
+            .collect::<Vec<_>>();
 
         for expected_item in expected_top_items.iter() {
             assert!(
@@ -984,11 +1092,7 @@ mod tests {
         let mut hk1 = TopK::with_seed(3, 100, 5, 0.9, seed);
         let mut hk2 = TopK::with_seed(3, 100, 5, 0.9, seed);
 
-        let items = [
-            b"item1".to_vec(),
-            b"item2".to_vec(),
-            b"item3".to_vec(),
-        ];
+        let items = [b"item1".to_vec(), b"item2".to_vec(), b"item3".to_vec()];
 
         // Add items to first instance
         hk1.add(&items[0], 5);
@@ -1000,7 +1104,11 @@ mod tests {
 
         // Merge and verify counts
         hk1.merge(&hk2).unwrap();
-        assert_eq!(hk1.count(&items[0]), 9, "Count should be sum of both instances");
+        assert_eq!(
+            hk1.count(&items[0]),
+            9,
+            "Count should be sum of both instances"
+        );
         assert_eq!(hk1.count(&items[1]), 3, "Count should be preserved");
         assert_eq!(hk1.count(&items[2]), 6, "Count should be preserved");
     }
@@ -1012,7 +1120,10 @@ mod tests {
         let hk2 = TopK::with_seed(3, 50, 5, 0.9, 12345);
 
         match hk1.merge(&hk2) {
-            Err(HeavyKeeperError::IncompatibleWidth { self_width, other_width }) => {
+            Err(HeavyKeeperError::IncompatibleWidth {
+                self_width,
+                other_width,
+            }) => {
                 assert_eq!(self_width, 100, "Self width should be 100");
                 assert_eq!(other_width, 50, "Other width should be 50");
             }
@@ -1027,7 +1138,10 @@ mod tests {
         let hk2 = TopK::with_seed(3, 100, 4, 0.9, 12345);
 
         match hk1.merge(&hk2) {
-            Err(HeavyKeeperError::IncompatibleDepth { self_depth, other_depth }) => {
+            Err(HeavyKeeperError::IncompatibleDepth {
+                self_depth,
+                other_depth,
+            }) => {
                 assert_eq!(self_depth, 5, "Self depth should be 5");
                 assert_eq!(other_depth, 4, "Other depth should be 4");
             }
@@ -1042,11 +1156,7 @@ mod tests {
         let mut hk1 = TopK::with_seed(3, 100, 5, 0.9, seed);
         let mut hk2 = TopK::with_seed(3, 100, 5, 0.9, seed);
 
-        let items = [
-            b"common".to_vec(),
-            b"unique1".to_vec(),
-            b"unique2".to_vec(),
-        ];
+        let items = [b"common".to_vec(), b"unique1".to_vec(), b"unique2".to_vec()];
 
         // Add overlapping items
         hk1.add(&items[0], 5);
@@ -1057,18 +1167,31 @@ mod tests {
 
         // Merge and verify counts
         hk1.merge(&hk2).unwrap();
-        assert_eq!(hk1.count(&items[0]), 10, "Common item count should be doubled");
-        assert_eq!(hk1.count(&items[1]), 1, "Unique item count should be preserved");
-        assert_eq!(hk1.count(&items[2]), 1, "Unique item count should be preserved");
+        assert_eq!(
+            hk1.count(&items[0]),
+            10,
+            "Common item count should be doubled"
+        );
+        assert_eq!(
+            hk1.count(&items[1]),
+            1,
+            "Unique item count should be preserved"
+        );
+        assert_eq!(
+            hk1.count(&items[2]),
+            1,
+            "Unique item count should be preserved"
+        );
     }
 
     #[test]
     fn test_decay_logic_with_mock_rng() {
         let mut mock_rng = MockRngCoreTrait::new();
-        mock_rng.expect_next_u64()
+        mock_rng
+            .expect_next_u64()
             .times(1..) // Allow multiple calls
             .return_const(0u64);
-        
+
         let topk = TopK::<Vec<u8>>::builder()
             .k(1)
             .width(1)
@@ -1077,24 +1200,24 @@ mod tests {
             .rng(mock_rng)
             .build()
             .unwrap();
-        
+
         let item1 = b"item1".to_vec();
         let item2 = b"item2".to_vec(); // Different item to trigger decay
-        
+
         // Add item1 with a very large count (beyond lookup table)
         let large_count = 9999u64;
         let mut topk = topk;
-        
+
         // Overwrite decay thresholds to always trigger decay
         topk.decay_thresholds.iter_mut().for_each(|threshold| {
             *threshold = u64::MAX; // Always trigger decay
         });
-        
+
         topk.add(&item1, large_count);
-        
+
         // Verify the initial count
         assert_eq!(topk.count(&item1), large_count);
-        
+
         // Add item2 multiple times to trigger decay on item1
         let decay_iterations = 1000;
         let mut last_count = topk.bucket_count(&item1);
@@ -1103,10 +1226,16 @@ mod tests {
             let new_count = topk.bucket_count(&item1);
             if new_count == 0 {
                 // Item has been evicted
-                assert!(!topk.query(&item1), "item1 should be evicted if count is zero");
+                assert!(
+                    !topk.query(&item1),
+                    "item1 should be evicted if count is zero"
+                );
                 break;
             } else {
-                assert!(new_count < last_count, "Bucket count should decrease with each decay");
+                assert!(
+                    new_count < last_count,
+                    "Bucket count should decrease with each decay"
+                );
                 last_count = new_count;
             }
         }
@@ -1115,9 +1244,7 @@ mod tests {
     #[test]
     fn test_decay_and_eviction() {
         let mut mock_rng = MockRngCoreTrait::new();
-        mock_rng.expect_next_u64()
-            .times(1..)
-            .return_const(0u64);
+        mock_rng.expect_next_u64().times(1..).return_const(0u64);
 
         let topk = TopK::<Vec<u8>>::builder()
             .k(1)
@@ -1140,13 +1267,13 @@ mod tests {
         let start_count = 10;
         topk.add(&item1, start_count);
         assert_eq!(topk.count(&item1), start_count);
-        
+
         // Print fingerprints
         let fp1 = crate::hash_composition::HashComposer::new(&topk.hasher, &item1).fingerprint();
         let fp2 = crate::hash_composition::HashComposer::new(&topk.hasher, &item2).fingerprint();
         println!("item1 fingerprint: {}", fp1);
         println!("item2 fingerprint: {}", fp2);
-        
+
         println!("Initial state:");
         println!("  item1 count: {}", topk.count(&item1));
         println!("  item1 query: {}", topk.query(&item1));
@@ -1159,31 +1286,49 @@ mod tests {
         topk.add(&item2, 1);
         let after = topk.bucket_count(&item1);
         println!("After adding item2: item1 bucket count = {}", after);
-        
+
         println!("Final state:");
         println!("  item1 count: {}", topk.count(&item1));
         println!("  item1 query: {}", topk.query(&item1));
         println!("  item2 count: {}", topk.count(&item2));
         println!("  item2 query: {}", topk.query(&item2));
-        
+
         // After the first decay, item1's bucket count should be decremented by 1
-        assert_eq!(after, before - 1, "Bucket count should decrement by 1 after first decay");
-        
+        assert_eq!(
+            after,
+            before - 1,
+            "Bucket count should decrement by 1 after first decay"
+        );
+
         // Since the count is still > 0, item1 should still be in the bucket
         // and item2 should not have taken over the bucket
-        assert!(topk.query(&item1), "Item1 should still be in the bucket after decay");
-        assert_eq!(topk.bucket_count(&item1), 9, "Item1 bucket count should be 9 after decay");
+        assert!(
+            topk.query(&item1),
+            "Item1 should still be in the bucket after decay"
+        );
+        assert_eq!(
+            topk.bucket_count(&item1),
+            9,
+            "Item1 bucket count should be 9 after decay"
+        );
         assert!(!topk.query(&item2), "Item2 should not be in the bucket yet");
-        assert_eq!(topk.bucket_count(&item2), 0, "Item2 bucket count should still be 0");
-        
+        assert_eq!(
+            topk.bucket_count(&item2),
+            0,
+            "Item2 bucket count should still be 0"
+        );
+
         // Now add item2 again to trigger another decay
         topk.add(&item2, 1);
         let final_count = topk.bucket_count(&item1);
         println!("After second decay: item1 bucket count = {}", final_count);
-        
+
         // After multiple decays, item1 should eventually be evicted
         // For this test, we'll just verify the count continues to decrease
-        assert!(final_count < 9, "Item1 bucket count should continue to decrease with more decays");
+        assert!(
+            final_count < 9,
+            "Item1 bucket count should continue to decrease with more decays"
+        );
     }
 
     #[test]
@@ -1197,11 +1342,7 @@ mod tests {
         assert!(matches!(result, Err(BuilderError::MissingField { field }) if field == "k"));
 
         // Test missing width
-        let result = TopK::<Vec<u8>>::builder()
-            .k(10)
-            .depth(5)
-            .decay(0.9)
-            .build();
+        let result = TopK::<Vec<u8>>::builder().k(10).depth(5).decay(0.9).build();
         assert!(matches!(result, Err(BuilderError::MissingField { field }) if field == "width"));
 
         // Test missing depth
@@ -1213,25 +1354,21 @@ mod tests {
         assert!(matches!(result, Err(BuilderError::MissingField { field }) if field == "depth"));
 
         // Test missing decay
-        let result = TopK::<Vec<u8>>::builder()
-            .k(10)
-            .width(100)
-            .depth(5)
-            .build();
+        let result = TopK::<Vec<u8>>::builder().k(10).width(100).depth(5).build();
         assert!(matches!(result, Err(BuilderError::MissingField { field }) if field == "decay"));
     }
 
     #[test]
     fn test_send_sync_issue() {
-        use std::sync::{Arc, Mutex};
         use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
         use std::thread;
-        
+
         type Id = String;
         type IdTopK = Arc<Mutex<HashMap<Id, TopK<String>>>>;
-        
+
         let topk_map: IdTopK = Arc::new(Mutex::new(HashMap::new()));
-        
+
         thread::spawn(move || {
             let mut map = topk_map.lock().unwrap();
             let topk = TopK::new(10, 100, 5, 0.9);
@@ -1253,6 +1390,36 @@ mod tests {
         topk.add(item, 1);
         assert!(topk.query(item));
         assert_eq!(topk.count(item), 1);
+    }
+
+    #[test]
+    fn test_decay_threshold_no_usize_truncation_for_large_count() {
+        // On 32-bit targets, `count as usize` would truncate u64 counts
+        // greater than u32::MAX, returning a large threshold from the
+        // start of the lookup table instead of a tiny one. Verify that
+        // for counts > u32::MAX the returned threshold is effectively zero
+        // (decay^4_billion underflows to ~0).
+        let topk: TopK<Vec<u8>> = TopK::new(10, 100, 5, 0.9);
+        let huge: u64 = (u32::MAX as u64) + 5000;
+        let thr = topk.decay_threshold_for_test(huge);
+        assert!(
+            thr < u64::MAX / 2,
+            "expected ~0 threshold for huge count, got {thr}"
+        );
+    }
+
+    #[test]
+    fn test_decay_threshold_no_powi_i32_overflow_for_huge_count() {
+        // `q = count / 1023` past i32::MAX would truncate (not saturate)
+        // to a negative i32; `powi(neg)` of a fractional base diverges
+        // and the threshold saturates to u64::MAX. Use powf instead.
+        let topk: TopK<Vec<u8>> = TopK::new(10, 100, 5, 0.9);
+        let huge: u64 = (i32::MAX as u64) * 2048;
+        let thr = topk.decay_threshold_for_test(huge);
+        assert!(
+            thr < u64::MAX / 2,
+            "expected ~0 threshold for huge count, got {thr}"
+        );
     }
 
     /// Tests that decay probability scaling uses the full u64 range
@@ -1299,4 +1466,3 @@ mod tests {
         assert_eq!(topk.bucket_count(&item2), 1);
     }
 }
-

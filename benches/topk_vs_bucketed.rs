@@ -1,12 +1,13 @@
-//! Head-to-head insert: `TopK` vs `BucketedTopK` on identical streams,
-//! same parameters. Workloads: Zipf(s=1.2) and uniform random.
+//! Head-to-head insert benchmark for `TopK`, `BucketedTopK`, and
+//! `CuckooTopK` on identical streams, same parameters.
+//! Workloads: Zipf(s=1.2) and uniform random.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::hint::black_box;
 
-use heavykeeper::{BucketedTopK, TopK};
-use rand::SeedableRng;
+use heavykeeper::{BucketedTopK, CuckooTopK, TopK};
 use rand::rngs::StdRng;
+use rand::SeedableRng;
 use rand_distr::{Distribution, Zipf};
 
 const K: usize = 100;
@@ -45,16 +46,35 @@ fn bench_workload(c: &mut Criterion, group_name: &str, data: &[u64]) {
         );
     });
 
-    group.bench_with_input(BenchmarkId::new("BucketedTopK", data.len()), &data, |b, data| {
-        b.iter_with_setup(
-            || BucketedTopK::<u64>::with_seed(K, WIDTH, DEPTH, DECAY, SEED),
-            |mut topk| {
-                for k in data.iter() {
-                    topk.add(black_box(k), 1);
-                }
-            },
-        );
-    });
+    group.bench_with_input(
+        BenchmarkId::new("BucketedTopK", data.len()),
+        &data,
+        |b, data| {
+            b.iter_with_setup(
+                || BucketedTopK::<u64>::with_seed(K, WIDTH, DEPTH, DECAY, SEED),
+                |mut topk| {
+                    for k in data.iter() {
+                        topk.add(black_box(k), 1);
+                    }
+                },
+            );
+        },
+    );
+
+    group.bench_with_input(
+        BenchmarkId::new("CuckooTopK", data.len()),
+        &data,
+        |b, data| {
+            b.iter_with_setup(
+                || CuckooTopK::<u64>::with_seed(K, WIDTH, DEPTH, DECAY, SEED),
+                |mut topk| {
+                    for k in data.iter() {
+                        topk.add(black_box(k), 1);
+                    }
+                },
+            );
+        },
+    );
 
     group.finish();
 }
