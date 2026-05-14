@@ -66,7 +66,7 @@ pub enum BuilderError {
     MissingField { field: String },
 }
 
-pub struct TopK<T: Ord + Clone + Hash + Debug> {
+pub struct TopK<T: Ord + Clone + Hash> {
     top_items: usize,
     width: usize,
     /// Non-zero when `width` is a power of two and `> 1`; the bucket
@@ -103,7 +103,7 @@ fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Vec<u64> {
     thresholds
 }
 
-impl<T: Ord + Clone + Hash + Debug> TopK<T> {
+impl<T: Ord + Clone + Hash> TopK<T> {
     pub fn builder() -> Builder<T> {
         Builder::new()
     }
@@ -349,42 +349,6 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
         nodes
     }
 
-    pub fn debug(&self) {
-        println!("width: {}", self.width);
-        println!("depth: {}", self.depth);
-        println!("decay: {}", self.decay);
-        println!("decay thresholds: {:?}", self.decay_thresholds);
-        let mut buckets: Vec<(&Bucket, usize, usize)> = self
-            .buckets
-            .iter()
-            .enumerate()
-            .flat_map(|(i, row)| {
-                row.iter()
-                    .enumerate()
-                    .map(move |(j, bucket)| (bucket, i, j))
-            })
-            .filter(|(bucket, _, _)| bucket.count != 0)
-            .collect();
-        buckets.sort_by(|a, b| b.0.count.cmp(&a.0.count));
-        for (bucket, i, j) in buckets {
-            println!("Bucket at row {}, column {}: {:?}", i, j, bucket);
-        }
-        println!("priority_queue: ");
-        let mut nodes = self
-            .priority_queue
-            .iter()
-            .map(|(item, count)| TopKNode {
-                item: item.clone(),
-                count,
-            })
-            .collect::<Vec<_>>();
-
-        nodes.sort();
-        for node in nodes {
-            println!("Node - Item: {:?}, Count: {}", node.item, node.count);
-        }
-    }
-
     // Merge another HeavyKeeper into this one
     pub fn merge(&mut self, other: &Self) -> Result<(), HeavyKeeperError> {
         // Verify compatible parameters
@@ -440,20 +404,56 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
     }
 }
 
-#[cfg(test)]
 impl<T: Ord + Clone + Hash + Debug> TopK<T> {
+    pub fn debug(&self) {
+        println!("width: {}", self.width);
+        println!("depth: {}", self.depth);
+        println!("decay: {}", self.decay);
+        println!("decay thresholds: {:?}", self.decay_thresholds);
+        let mut buckets: Vec<(&Bucket, usize, usize)> = self
+            .buckets
+            .iter()
+            .enumerate()
+            .flat_map(|(i, row)| {
+                row.iter()
+                    .enumerate()
+                    .map(move |(j, bucket)| (bucket, i, j))
+            })
+            .filter(|(bucket, _, _)| bucket.count != 0)
+            .collect();
+        buckets.sort_by(|a, b| b.0.count.cmp(&a.0.count));
+        for (bucket, i, j) in buckets {
+            println!("Bucket at row {}, column {}: {:?}", i, j, bucket);
+        }
+        println!("priority_queue: ");
+        let mut nodes = self
+            .priority_queue
+            .iter()
+            .map(|(item, count)| TopKNode {
+                item: item.clone(),
+                count,
+            })
+            .collect::<Vec<_>>();
+
+        nodes.sort();
+        for node in nodes {
+            println!("Node - Item: {:?}, Count: {}", node.item, node.count);
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn decay_threshold_for_test(&self, count: u64) -> u64 {
         self.decay_threshold(count)
     }
 }
 
-impl<T: Ord + Clone + Hash + Debug> Default for Builder<T> {
+impl<T: Ord + Clone + Hash> Default for Builder<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Ord + Clone + Hash + Debug> Builder<T> {
+impl<T: Ord + Clone + Hash> Builder<T> {
     pub fn new() -> Self {
         Self {
             k: None,
