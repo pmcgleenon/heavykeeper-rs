@@ -119,7 +119,7 @@ fn mix64(mut x: u64) -> u64 {
 /// candidate buckets (cuckoo-style); on collision the lower-count occupant
 /// is evicted and re-homed in its other candidate bucket via a bounded kick
 /// chain.
-pub struct CuckooTopK<T: Ord + Clone + Hash + Debug> {
+pub struct CuckooTopK<T: Ord + Clone + Hash> {
     width: usize,
     width_mask: usize,
     depth: usize,
@@ -135,7 +135,7 @@ pub struct CuckooTopK<T: Ord + Clone + Hash + Debug> {
     max_kicks: usize,
 }
 
-impl<T: Ord + Clone + Hash + Debug> CuckooTopK<T> {
+impl<T: Ord + Clone + Hash> CuckooTopK<T> {
     /// Build a `CuckooTopK` with a fixed default seed and the default kick
     /// limit ([`DEFAULT_MAX_CUCKOO_KICKS`]). Parameters are not validated;
     /// use [`CuckooTopK::builder`] for a fallible, validated construction
@@ -722,13 +722,13 @@ pub struct CuckooBuilder<T> {
     _phantom: std::marker::PhantomData<T>,
 }
 
-impl<T: Ord + Clone + Hash + Debug> Default for CuckooBuilder<T> {
+impl<T: Ord + Clone + Hash> Default for CuckooBuilder<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Ord + Clone + Hash + Debug> CuckooBuilder<T> {
+impl<T: Ord + Clone + Hash> CuckooBuilder<T> {
     pub fn new() -> Self {
         Self {
             k: None,
@@ -813,7 +813,7 @@ impl<T: Ord + Clone + Hash + Debug> CuckooBuilder<T> {
 }
 
 #[cfg(test)]
-impl<T: Ord + Clone + Hash + Debug> CuckooTopK<T> {
+impl<T: Ord + Clone + Hash> CuckooTopK<T> {
     pub(crate) fn decay_threshold_for_test(&self, count: u64) -> u64 {
         self.decay_threshold(count)
     }

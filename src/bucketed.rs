@@ -90,7 +90,7 @@ fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Box<[u64]> {
         .into_boxed_slice()
 }
 
-pub struct BucketedTopK<T: Ord + Clone + Hash + Debug> {
+pub struct BucketedTopK<T: Ord + Clone + Hash> {
     width: usize,
     /// Non-zero when `width` is a power of two and `> 1`; in that case
     /// bucket indexing uses `hash & width_mask` instead of `% width`.
@@ -106,7 +106,7 @@ pub struct BucketedTopK<T: Ord + Clone + Hash + Debug> {
     top_items: usize,
 }
 
-impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
+impl<T: Ord + Clone + Hash> BucketedTopK<T> {
     pub fn new(k: usize, width: usize, depth: usize, decay: f64) -> Self {
         Self::with_seed(k, width, depth, decay, 12345)
     }
@@ -443,7 +443,7 @@ impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
 }
 
 #[cfg(test)]
-impl<T: Ord + Clone + Hash + Debug> BucketedTopK<T> {
+impl<T: Ord + Clone + Hash> BucketedTopK<T> {
     pub(crate) fn hasher(&self) -> &RandomState {
         &self.hasher
     }
@@ -463,13 +463,13 @@ pub struct BucketedBuilder<T> {
     _phantom: std::marker::PhantomData<T>,
 }
 
-impl<T: Ord + Clone + Hash + Debug> Default for BucketedBuilder<T> {
+impl<T: Ord + Clone + Hash> Default for BucketedBuilder<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Ord + Clone + Hash + Debug> BucketedBuilder<T> {
+impl<T: Ord + Clone + Hash> BucketedBuilder<T> {
     pub fn new() -> Self {
         Self {
             k: None,
