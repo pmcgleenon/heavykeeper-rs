@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.4...v0.6.5) - 2026-05-14
+
+### Other
+
+- Dropping trait bound on fmt::Debug for crate main structs:
+
 ## [0.6.4](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.3...v0.6.4) - 2026-05-10
 
 ### Added
