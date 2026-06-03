@@ -230,8 +230,24 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
     {
+        let _ = self.add_with_evicted(item, increment);
+    }
+
+    /// Same as [`add`], but returns the top-k entry that was displaced from
+    /// the priority queue by this call, if any. An eviction happens only
+    /// when the priority queue is at capacity and `item` reaches a count
+    /// strictly greater than the current minimum tracked count. Returns
+    /// `None` when nothing was evicted (queue not yet full, item already
+    /// tracked, or count too low to displace the current min).
+    ///
+    /// [`add`]: CuckooTopK::add
+    pub fn add_with_evicted<Q>(&mut self, item: &Q, increment: u64) -> Option<CuckooNode<T>>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
+    {
         if increment == 0 {
-            return;
+            return None;
         }
 
         let fp = self.hasher.hash_one(item);
@@ -239,19 +255,16 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
 
         if let Some(idx) = self.find_heavy(fp, primary, alternate) {
             self.heavy[idx].count = self.heavy[idx].count.saturating_add(increment);
-            self.update_priority_queue(item, self.heavy[idx].count);
-            return;
+            return self.update_priority_queue(item, self.heavy[idx].count);
         }
 
-        let lobby_count = match self.update_lobby(primary, fp, increment) {
-            Some(count) => count,
-            None => return,
-        };
+        let lobby_count = self.update_lobby(primary, fp, increment)?;
 
         if self.promote(fp, lobby_count, primary, alternate) {
             self.clear_lobby(primary, fp);
-            self.update_priority_queue(item, lobby_count);
+            return self.update_priority_queue(item, lobby_count);
         }
+        None
     }
 
     /// Estimated count for `item`. Consults the priority queue first
@@ -689,7 +702,7 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
         ((last.powf(q) * rem_thr) * u64::MAX as f64) as u64
     }
 
-    fn update_priority_queue<Q>(&mut self, item: &Q, count: u64)
+    fn update_priority_queue<Q>(&mut self, item: &Q, count: u64) -> Option<CuckooNode<T>>
     where
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
@@ -699,15 +712,16 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
                 self.priority_queue.update_if_present(item, count);
                 self.min_pq_count = self.priority_queue.min_count();
             }
-            return;
+            return None;
         }
 
         if self.priority_queue.is_full() && count <= self.min_pq_count {
-            return;
+            return None;
         }
 
-        self.priority_queue.upsert(item.to_owned(), count);
+        let evicted = self.priority_queue.upsert(item.to_owned(), count);
         self.min_pq_count = self.priority_queue.min_count();
+        evicted.map(|(item, count)| CuckooNode { item, count })
     }
 }
 
@@ -1261,5 +1275,60 @@ mod tests {
             thr < u64::MAX / 2,
             "expected ~0 threshold for huge count, got {thr}"
         );
+    }
+
+    #[test]
+    fn test_add_with_evicted_returns_displaced_item() {
+        // k=2 priority queue. Fill it with two items, then add a third
+        // hotter item. The minimum tracked item should be returned with
+        // its pre-eviction count.
+        let mut topk: CuckooTopK<Vec<u8>> = CuckooTopK::new(2, 64, 2, 0.9);
+
+        // Pump enough to force promotion into heavy slots so PQ gets
+        // populated.
+        let none1 = topk.add_with_evicted(&b"a".to_vec(), 5);
+        let none2 = topk.add_with_evicted(&b"b".to_vec(), 10);
+        assert!(none1.is_none(), "first add should not evict");
+        assert!(none2.is_none(), "second add (still under k) should not evict");
+
+        // Sanity-check both items reached the priority queue.
+        let list = topk.list();
+        assert_eq!(list.len(), 2);
+
+        // Adding a hotter third item should displace "a" (count 5).
+        let evicted = topk.add_with_evicted(&b"c".to_vec(), 20);
+        let evicted = evicted.expect("expected an eviction");
+        assert_eq!(evicted.item, b"a".to_vec());
+        assert_eq!(evicted.count, 5);
+
+        // PQ now holds b and c.
+        let list = topk.list();
+        let items: Vec<_> = list.iter().map(|n| n.item.clone()).collect();
+        assert!(items.contains(&b"b".to_vec()));
+        assert!(items.contains(&b"c".to_vec()));
+        assert!(!items.contains(&b"a".to_vec()));
+    }
+
+    #[test]
+    fn test_add_with_evicted_no_eviction_cases() {
+        let mut topk: CuckooTopK<Vec<u8>> = CuckooTopK::new(2, 64, 2, 0.9);
+
+        // increment == 0 → no work, no eviction.
+        assert!(topk.add_with_evicted(&b"a".to_vec(), 0).is_none());
+
+        // PQ not yet full → no eviction.
+        assert!(topk.add_with_evicted(&b"a".to_vec(), 5).is_none());
+        assert!(topk.add_with_evicted(&b"b".to_vec(), 10).is_none());
+
+        // Updating an already-tracked item → no eviction even at capacity.
+        assert!(topk.add_with_evicted(&b"a".to_vec(), 1).is_none());
+
+        // New item with count not high enough to beat the PQ minimum (5)
+        // → no eviction. Use a fresh sketch so heavy slots are free for
+        // promotion.
+        let mut topk: CuckooTopK<Vec<u8>> = CuckooTopK::new(2, 64, 2, 0.9);
+        topk.add_with_evicted(&b"hot".to_vec(), 50);
+        topk.add_with_evicted(&b"warm".to_vec(), 30);
+        assert!(topk.add_with_evicted(&b"cold".to_vec(), 10).is_none());
     }
 }
