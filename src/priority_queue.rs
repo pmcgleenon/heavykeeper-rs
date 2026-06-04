@@ -118,11 +118,9 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
         // Queue is full - check if new count beats minimum
         if let Some(&(min_count, _, item_idx)) = self.heap.first() {
             if count > min_count {
-                let old_item = self.item_store[item_idx].clone();
+                let old_item = std::mem::replace(&mut self.item_store[item_idx], item.clone());
                 self.items.remove(&old_item);
 
-                // Reuse the item slot
-                self.item_store[item_idx] = item.clone();
                 self.items.insert(item, (count, 0));
                 self.sequence += 1;
                 self.heap[0] = (count, self.sequence, item_idx);
