@@ -46,3 +46,7 @@ harness = false
 [[bench]]
 name = "topk_vs_bucketed"
 harness = false
+
+[[bench]]
+name = "priority_queue_eviction"
+harness = false

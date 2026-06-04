@@ -1289,7 +1289,10 @@ mod tests {
         let none1 = topk.add_with_evicted(&b"a".to_vec(), 5);
         let none2 = topk.add_with_evicted(&b"b".to_vec(), 10);
         assert!(none1.is_none(), "first add should not evict");
-        assert!(none2.is_none(), "second add (still under k) should not evict");
+        assert!(
+            none2.is_none(),
+            "second add (still under k) should not evict"
+        );
 
         // Sanity-check both items reached the priority queue.
         let list = topk.list();

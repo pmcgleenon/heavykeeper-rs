@@ -261,7 +261,7 @@ impl<T: Ord + Clone + Hash> TopK<T> {
     {
         let _ = self.add_with_evicted(item, increment);
     }
-    
+
     pub fn add_with_evicted<Q>(&mut self, item: &Q, increment: u64) -> Option<TopKNode<T>>
     where
         T: Borrow<Q>,
