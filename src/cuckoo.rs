@@ -233,7 +233,7 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
         let _ = self.add_with_evicted(item, increment);
     }
 
-    /// Same as [`add`], but returns the top-k entry that was displaced from
+    /// Same as [`add`], but returns the top-k item that was displaced from
     /// the priority queue by this call, if any. An eviction happens only
     /// when the priority queue is at capacity and `item` reaches a count
     /// strictly greater than the current minimum tracked count. Returns
@@ -241,7 +241,7 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
     /// tracked, or count too low to displace the current min).
     ///
     /// [`add`]: CuckooTopK::add
-    pub fn add_with_evicted<Q>(&mut self, item: &Q, increment: u64) -> Option<CuckooNode<T>>
+    pub fn add_with_evicted<Q>(&mut self, item: &Q, increment: u64) -> Option<T>
     where
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
@@ -702,7 +702,7 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
         ((last.powf(q) * rem_thr) * u64::MAX as f64) as u64
     }
 
-    fn update_priority_queue<Q>(&mut self, item: &Q, count: u64) -> Option<CuckooNode<T>>
+    fn update_priority_queue<Q>(&mut self, item: &Q, count: u64) -> Option<T>
     where
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
@@ -721,7 +721,7 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
 
         let evicted = self.priority_queue.upsert(item.to_owned(), count);
         self.min_pq_count = self.priority_queue.min_count();
-        evicted.map(|(item, count)| CuckooNode { item, count })
+        evicted
     }
 }
 
@@ -1289,17 +1289,17 @@ mod tests {
         let none1 = topk.add_with_evicted(&b"a".to_vec(), 5);
         let none2 = topk.add_with_evicted(&b"b".to_vec(), 10);
         assert!(none1.is_none(), "first add should not evict");
-        assert!(none2.is_none(), "second add (still under k) should not evict");
+        assert!(
+            none2.is_none(),
+            "second add (still under k) should not evict"
+        );
 
         // Sanity-check both items reached the priority queue.
         let list = topk.list();
         assert_eq!(list.len(), 2);
-
-        // Adding a hotter third item should displace "a" (count 5).
         let evicted = topk.add_with_evicted(&b"c".to_vec(), 20);
         let evicted = evicted.expect("expected an eviction");
-        assert_eq!(evicted.item, b"a".to_vec());
-        assert_eq!(evicted.count, 5);
+        assert_eq!(evicted, b"a".to_vec());
 
         // PQ now holds b and c.
         let list = topk.list();

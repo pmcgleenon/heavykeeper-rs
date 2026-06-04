@@ -261,8 +261,8 @@ impl<T: Ord + Clone + Hash> TopK<T> {
     {
         let _ = self.add_with_evicted(item, increment);
     }
-    
-    pub fn add_with_evicted<Q>(&mut self, item: &Q, increment: u64) -> Option<TopKNode<T>>
+
+    pub fn add_with_evicted<Q>(&mut self, item: &Q, increment: u64) -> Option<T>
     where
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
@@ -326,9 +326,7 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         }
 
         // Clone the item here since we need to store it in the priority queue
-        self.priority_queue
-            .upsert(item.to_owned(), max_count)
-            .map(|(item, count)| TopKNode { item, count })
+        self.priority_queue.upsert(item.to_owned(), max_count)
     }
 
     fn decay_threshold(&self, count: u64) -> u64 {
@@ -1487,8 +1485,7 @@ mod tests {
         let evicted = topk
             .add_with_evicted(&b"c".to_vec(), 20)
             .expect("expected an eviction");
-        assert_eq!(evicted.item, b"a".to_vec());
-        assert_eq!(evicted.count, 5);
+        assert_eq!(evicted, b"a".to_vec());
 
         let items: Vec<_> = topk.list().iter().map(|n| n.item.clone()).collect();
         assert!(items.contains(&b"b".to_vec()));

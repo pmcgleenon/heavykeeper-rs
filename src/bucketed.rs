@@ -183,7 +183,7 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
         let _ = self.add_with_evicted(item, increment);
     }
 
-    pub fn add_with_evicted<Q>(&mut self, item: &Q, increment: u64) -> Option<BucketedNode<T>>
+    pub fn add_with_evicted<Q>(&mut self, item: &Q, increment: u64) -> Option<T>
     where
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
@@ -248,7 +248,7 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
 
         let evicted = self.priority_queue.upsert(item.to_owned(), max_count);
         self.min_pq_count = self.priority_queue.min_count();
-        evicted.map(|(item, count)| BucketedNode { item, count })
+        evicted
     }
 
     pub fn count<Q>(&self, item: &Q) -> u64
@@ -1046,8 +1046,7 @@ mod tests {
         let evicted = topk
             .add_with_evicted(&b"c".to_vec(), 20)
             .expect("expected an eviction");
-        assert_eq!(evicted.item, b"a".to_vec());
-        assert_eq!(evicted.count, 5);
+        assert_eq!(evicted, b"a".to_vec());
 
         let items: Vec<_> = topk.list().iter().map(|n| n.item.clone()).collect();
         assert!(items.contains(&b"b".to_vec()));

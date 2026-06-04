@@ -76,10 +76,9 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
 
     /// Insert or update `item` to `count`.
     ///
-    /// Returns `Some((evicted, count))` when a previously tracked item is
-    /// displaced by this call (queue was full and `count` beat the current
-    /// min), otherwise `None`.
-    pub(crate) fn upsert(&mut self, item: T, count: u64) -> Option<(T, u64)> {
+    /// Returns `Some(evicted)` when a previously tracked item is displaced
+    /// by this call, otherwise `None`.
+    pub(crate) fn upsert(&mut self, item: T, count: u64) -> Option<T> {
         // Fast path: update existing item
         if let Some((old_count, pos)) = self.items.get_mut(&item) {
             if count == *old_count {
@@ -128,7 +127,7 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
                 self.sequence += 1;
                 self.heap[0] = (count, self.sequence, item_idx);
                 self.sift_down(0);
-                return Some((old_item, min_count));
+                return Some(old_item);
             }
         }
         None
