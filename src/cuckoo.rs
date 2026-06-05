@@ -315,6 +315,15 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
         self.count(item) > 0
     }
 
+    /// Returns true if `item` is currently one of the top-k tracked flows
+    pub fn query_topk_items<Q>(&self, item: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
+    {
+        self.priority_queue.get(item).is_some()
+    }
+
     /// Top-k items currently tracked by the priority queue, sorted by
     /// descending count. Items still in the lobby (not yet promoted to a
     /// heavy slot) do not appear here.
@@ -1330,5 +1339,34 @@ mod tests {
         topk.add_with_evicted(&b"hot".to_vec(), 50);
         topk.add_with_evicted(&b"warm".to_vec(), 30);
         assert!(topk.add_with_evicted(&b"cold".to_vec(), 10).is_none());
+    }
+
+    #[test]
+    fn test_query_topk_items_distinguishes_tracked_from_sketch_only() {
+        let mut topk: CuckooTopK<Vec<u8>> = CuckooTopK::new(1, 1, 1, 0.9);
+
+        topk.add(b"hot".as_slice(), 100);
+        assert!(
+            topk.query_topk_items(b"hot".as_slice()),
+            "hot is the tracked top-1"
+        );
+
+        // A weaker item: present in the sketch but not in the top-k.
+        topk.add(b"cold".as_slice(), 1);
+        assert!(
+            !topk.query_topk_items(b"cold".as_slice()),
+            "cold is not tracked in the top-k"
+        );
+
+        // An item never added at all is neither in the sketch nor top-k.
+        assert!(!topk.query_topk_items(b"absent".as_slice()));
+    }
+
+    #[test]
+    fn test_query_topk_items_borrowed_lookup() {
+        let mut topk: CuckooTopK<String> = CuckooTopK::new(10, 100, 4, 0.9);
+        topk.add("foo", 5);
+        assert!(topk.query_topk_items("foo"));
+        assert!(!topk.query_topk_items("bar"));
     }
 }
