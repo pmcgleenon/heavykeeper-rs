@@ -319,9 +319,9 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
     pub fn query_topk_items<Q>(&self, item: &Q) -> bool
     where
         T: Borrow<Q>,
-        Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
+        Q: Hash + Eq + ?Sized,
     {
-        self.priority_queue.get(item).is_some()
+        self.priority_queue.contains(item)
     }
 
     /// Top-k items currently tracked by the priority queue, sorted by
