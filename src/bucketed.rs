@@ -287,7 +287,7 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
     }
 
     /// Returns true if `item` is currently one of the top-k tracked flows.
-    pub fn query_topk_items<Q>(&self, item: &Q) -> bool
+    pub fn contains_top_k<Q>(&self, item: &Q) -> bool
     where
         T: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
@@ -624,23 +624,23 @@ mod tests {
     }
 
     #[test]
-    fn test_query_topk_items_distinguishes_tracked_from_sketch_only() {
+    fn test_contains_top_k_distinguishes_tracked_from_sketch_only() {
         let mut topk: BucketedTopK<Vec<u8>> = BucketedTopK::new(1, 1, 1, 0.9);
 
         topk.add(b"hot".as_slice(), 100);
-        assert!(topk.query_topk_items(b"hot".as_slice()));
+        assert!(topk.contains_top_k(b"hot".as_slice()));
 
         topk.add(b"cold".as_slice(), 1);
-        assert!(!topk.query_topk_items(b"cold".as_slice()));
-        assert!(!topk.query_topk_items(b"absent".as_slice()));
+        assert!(!topk.contains_top_k(b"cold".as_slice()));
+        assert!(!topk.contains_top_k(b"absent".as_slice()));
     }
 
     #[test]
-    fn test_query_topk_items_borrowed_lookup() {
+    fn test_contains_top_k_borrowed_lookup() {
         let mut topk: BucketedTopK<String> = BucketedTopK::new(10, 100, 4, 0.9);
         topk.add("foo", 5);
-        assert!(topk.query_topk_items("foo"));
-        assert!(!topk.query_topk_items("bar"));
+        assert!(topk.contains_top_k("foo"));
+        assert!(!topk.contains_top_k("bar"));
     }
 
     #[test]
