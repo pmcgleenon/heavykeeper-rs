@@ -42,6 +42,14 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
         self.items.get(item).map(|(count, _)| *count)
     }
 
+    pub(crate) fn contains<Q>(&self, item: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.items.contains_key(item)
+    }
+
     /// Increase an existing entry's count. Caller must guarantee the new count
     /// is >= the current count (paper Algorithm 1: heap is max(maxv, existing)).
     pub(crate) fn update_if_present<Q>(&mut self, item: &Q, count: u64) -> bool
