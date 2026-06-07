@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.6...v0.6.7) - 2026-06-07
+
+### Added
+
+- rename to contains_top_k
+- add query_topk_items to TopK and BucketedTopK
+- use contains for top-k checks
+- *(cuckoo)* add query_topk_items to check top-k
+
 ## [0.6.6](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.5...v0.6.6) - 2026-06-04
 
 ### Added
