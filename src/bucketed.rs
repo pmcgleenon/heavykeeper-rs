@@ -90,6 +90,7 @@ fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Box<[u64]> {
         .into_boxed_slice()
 }
 
+#[derive(Clone)]
 pub struct BucketedTopK<T: Ord + Clone + Hash> {
     width: usize,
     /// Non-zero when `width` is a power of two and `> 1`; in that case
