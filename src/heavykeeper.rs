@@ -66,6 +66,7 @@ pub enum BuilderError {
     MissingField { field: String },
 }
 
+#[derive(Clone)]
 pub struct TopK<T: Ord + Clone + Hash> {
     top_items: usize,
     width: usize,
@@ -78,7 +79,7 @@ pub struct TopK<T: Ord + Clone + Hash> {
     buckets: Vec<Vec<Bucket>>,
     priority_queue: TopKQueue<T>,
     hasher: RandomState,
-    random: Box<dyn RngCore + Send + Sync>,
+    random: SmallRng,
 }
 
 pub struct Builder<T> {
@@ -88,7 +89,6 @@ pub struct Builder<T> {
     decay: Option<f64>,
     seed: Option<u64>,
     hasher: Option<RandomState>,
-    rng: Option<Box<dyn RngCore + Send + Sync>>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -127,14 +127,7 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         decay: f64,
         hasher: RandomState,
     ) -> Self {
-        Self::with_components(
-            k,
-            width,
-            depth,
-            decay,
-            hasher,
-            Box::new(SmallRng::seed_from_u64(0)),
-        )
+        Self::with_components(k, width, depth, decay, hasher, SmallRng::seed_from_u64(0))
     }
 
     fn with_components(
@@ -143,7 +136,7 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         depth: usize,
         decay: f64,
         hasher: RandomState,
-        rng: Box<dyn RngCore + Send + Sync>,
+        rng: SmallRng,
     ) -> Self {
         // Pre-allocate with capacity to avoid resizing
         let mut buckets = Vec::with_capacity(depth);
@@ -209,7 +202,7 @@ impl<T: Ord + Clone + Hash> TopK<T> {
     {
         self.priority_queue.contains(item)
     }
-    
+
     pub fn count<Q>(&self, item: &Q) -> u64
     where
         T: Borrow<Q>,
@@ -479,7 +472,6 @@ impl<T: Ord + Clone + Hash> Builder<T> {
             decay: None,
             seed: None,
             hasher: None,
-            rng: None,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -514,11 +506,6 @@ impl<T: Ord + Clone + Hash> Builder<T> {
         self
     }
 
-    pub fn rng<R: RngCore + Send + Sync + 'static>(mut self, rng: R) -> Self {
-        self.rng = Some(Box::new(rng));
-        self
-    }
-
     pub fn build(self) -> Result<TopK<T>, BuilderError> {
         let k = self.k.ok_or_else(|| BuilderError::MissingField {
             field: "k".to_string(),
@@ -541,13 +528,7 @@ impl<T: Ord + Clone + Hash> Builder<T> {
             }
         });
 
-        let rng = self.rng.unwrap_or_else(|| {
-            if let Some(seed) = self.seed {
-                Box::new(SmallRng::seed_from_u64(seed))
-            } else {
-                Box::new(SmallRng::seed_from_u64(0))
-            }
-        });
+        let rng = SmallRng::seed_from_u64(self.seed.unwrap_or(0));
 
         Ok(TopK::with_components(k, width, depth, decay, hasher, rng))
     }
@@ -556,31 +537,6 @@ impl<T: Ord + Clone + Hash> Builder<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockall::automock;
-
-    #[automock]
-    trait RngCoreTrait {
-        fn next_u64(&mut self) -> u64;
-    }
-
-    impl RngCore for MockRngCoreTrait {
-        fn next_u32(&mut self) -> u32 {
-            RngCoreTrait::next_u64(self) as u32
-        }
-
-        fn next_u64(&mut self) -> u64 {
-            RngCoreTrait::next_u64(self)
-        }
-
-        fn fill_bytes(&mut self, dest: &mut [u8]) {
-            for chunk in dest.chunks_mut(8) {
-                let value = RngCoreTrait::next_u64(self);
-                for (i, byte) in chunk.iter_mut().enumerate() {
-                    *byte = (value >> (i * 8)) as u8;
-                }
-            }
-        }
-    }
 
     /// Tests basic initialization of TopK with default parameters
     #[test]
@@ -1222,19 +1178,13 @@ mod tests {
     }
 
     #[test]
-    fn test_decay_logic_with_mock_rng() {
-        let mut mock_rng = MockRngCoreTrait::new();
-        mock_rng
-            .expect_next_u64()
-            .times(1..) // Allow multiple calls
-            .return_const(0u64);
-
+    fn test_decay_logic() {
         let topk = TopK::<Vec<u8>>::builder()
             .k(1)
             .width(1)
             .depth(1)
             .decay(0.9)
-            .rng(mock_rng)
+            .seed(12345)
             .build()
             .unwrap();
 
@@ -1280,15 +1230,12 @@ mod tests {
 
     #[test]
     fn test_decay_and_eviction() {
-        let mut mock_rng = MockRngCoreTrait::new();
-        mock_rng.expect_next_u64().times(1..).return_const(0u64);
-
         let topk = TopK::<Vec<u8>>::builder()
             .k(1)
             .width(1)
             .depth(1)
             .decay(0.9)
-            .rng(mock_rng)
+            .seed(12345)
             .build()
             .unwrap();
 
@@ -1461,30 +1408,22 @@ mod tests {
 
     /// Tests that decay probability scaling uses the full u64 range
     ///
-    /// With decay = 1.0 and RNG always returning exactly 2^63, the old
-    /// implementation (which used threshold = 2^63) would never decay
-    /// because `rand < threshold` was false for rand = 2^63.
-    ///
-    /// After the fix (threshold = u64::MAX), the same condition is true,
-    /// so the bucket is always decayed and replaced as expected for
-    /// probability 1.0.
+    /// The decay roll is `rng.next_u64() < threshold`. With decay = 1.0 the
+    /// threshold must span the full u64 range (`u64::MAX`) so that decay
+    /// fires for every possible RNG value.
     #[test]
     fn test_decay_probability_scaling_fix() {
-        let mut mock_rng = MockRngCoreTrait::new();
-        // Always return value exactly at the old threshold: 2^63.
-        mock_rng
-            .expect_next_u64()
-            .times(1..) // Allow multiple calls
-            .return_const(1u64 << 63);
-
         let mut topk = TopK::<Vec<u8>>::builder()
             .k(1)
             .width(1)
             .depth(1)
             .decay(1.0)
-            .rng(mock_rng)
+            .seed(12345)
             .build()
             .unwrap();
+
+        // decay = 1.0 -> full-range threshold (u64::MAX)
+        assert_eq!(topk.decay_threshold_for_test(5), u64::MAX);
 
         let item1 = b"item1".to_vec();
         let item2 = b"item2".to_vec();
