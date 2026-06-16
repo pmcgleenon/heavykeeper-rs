@@ -119,6 +119,9 @@ fn mix64(mut x: u64) -> u64 {
 /// candidate buckets (cuckoo-style); on collision the lower-count occupant
 /// is evicted and re-homed in its other candidate bucket via a bounded kick
 /// chain.
+///
+/// Implements [`Clone`] as a true deep copy
+#[derive(Clone)]
 pub struct CuckooTopK<T: Ord + Clone + Hash> {
     width: usize,
     width_mask: usize,

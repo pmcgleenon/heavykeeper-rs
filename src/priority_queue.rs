@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 
 /// A specialized priority queue for HeavyKeeper that maintains top-k items by count
+#[derive(Clone)]
 pub(crate) struct TopKQueue<T> {
     items: HashMap<T, (u64, usize), RandomState>, // item -> (count, heap_index)
     heap: Vec<(u64, usize, usize)>,               // (count, sequence, item_index)
