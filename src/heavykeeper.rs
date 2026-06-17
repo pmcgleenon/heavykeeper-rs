@@ -117,7 +117,7 @@ impl<T: Ord + Clone + Hash> TopK<T> {
     // New constructor that takes a seed
     pub fn with_seed(k: usize, width: usize, depth: usize, decay: f64, seed: u64) -> Self {
         let hasher = RandomState::with_seeds(seed, seed, seed, seed);
-        Self::with_hasher(k, width, depth, decay, hasher)
+        Self::with_components(k, width, depth, decay, hasher, SmallRng::seed_from_u64(seed))
     }
 
     pub fn with_hasher(
