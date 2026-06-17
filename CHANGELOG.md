@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.8](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.7...v0.6.8) - 2026-06-17
+
+### Added
+
+- derive Clone for TopK
+- derive Clone for BucketedTopK
+- derive Clone for CuckooTopK
+
+### Fixed
+
+- seed decay RNG in with_seed for reproducibility
+
 ## [0.6.7](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.6...v0.6.7) - 2026-06-07
 
 ### Added
