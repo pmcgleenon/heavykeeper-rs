@@ -35,6 +35,21 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
         self.items.len()
     }
 
+    /// Returns an estimate of heap memory (in bytes) used by this queue.
+    ///
+    /// Computed from allocated *capacity* of the `HashMap`, heap vector,
+    /// item store, and free-slot list. Excludes heap owned by individual
+    /// `T` values, and the `HashMap` term is an approximation.
+    pub(crate) fn heap_size_bytes(&self) -> usize {
+        use std::mem::size_of;
+        // hashbrown stores each entry as (K, V) plus one control byte.
+        let map_entry = size_of::<(T, (u64, usize))>() + 1;
+        self.items.capacity() * map_entry
+            + self.heap.capacity() * size_of::<(u64, usize, usize)>()
+            + self.item_store.capacity() * size_of::<T>()
+            + self.free_slots.capacity() * size_of::<usize>()
+    }
+
     pub(crate) fn get<Q>(&self, item: &Q) -> Option<u64>
     where
         T: Borrow<Q>,
