@@ -279,12 +279,26 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
         0
     }
 
-    pub fn query<Q>(&self, item: &Q) -> bool
+    /// Returns true if `item` is present in the sketch (its estimated count
+    /// is non-zero). This is a probabilistic membership test and may report
+    /// false positives due to fingerprint collisions; it is *not* the same as
+    /// [`contains_top_k`](Self::contains_top_k), which tests top-k membership.
+    pub fn contains<Q>(&self, item: &Q) -> bool
     where
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
     {
         self.count(item) > 0
+    }
+
+    /// Deprecated alias for [`contains`](Self::contains).
+    #[deprecated(since = "0.6.9", note = "renamed to `contains`")]
+    pub fn query<Q>(&self, item: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
+    {
+        self.contains(item)
     }
 
     /// Returns true if `item` is currently one of the top-k tracked flows.
@@ -644,16 +658,29 @@ mod tests {
     }
 
     #[test]
-    fn test_query_and_list() {
+    fn test_contains_and_list() {
         let mut topk: BucketedTopK<Vec<u8>> = BucketedTopK::new(3, 64, 4, 0.9);
         topk.add(&b"a".to_vec(), 5);
         topk.add(&b"b".to_vec(), 1);
-        assert!(topk.query(&b"a".to_vec()));
-        assert!(!topk.query(&b"missing".to_vec()));
+        assert!(topk.contains(&b"a".to_vec()));
+        assert!(!topk.contains(&b"missing".to_vec()));
         let list = topk.list();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].item, b"a".to_vec());
         assert_eq!(list[0].count, 5);
+    }
+
+    /// The deprecated `query` alias must still compile and delegate to `contains`.
+    #[test]
+    #[allow(deprecated)]
+    fn test_query_alias_delegates_to_contains() {
+        let mut topk: BucketedTopK<Vec<u8>> = BucketedTopK::new(3, 64, 4, 0.9);
+        topk.add(&b"a".to_vec(), 5);
+        assert_eq!(topk.query(&b"a".to_vec()), topk.contains(&b"a".to_vec()));
+        assert_eq!(
+            topk.query(&b"missing".to_vec()),
+            topk.contains(&b"missing".to_vec())
+        );
     }
 
     #[test]
@@ -798,8 +825,8 @@ mod tests {
         let emoji = "🚀🌟".as_bytes().to_vec();
         topk.add(&p, 1);
         topk.add(&emoji, 1);
-        assert!(topk.query(&p));
-        assert!(topk.query(&emoji));
+        assert!(topk.contains(&p));
+        assert!(topk.contains(&emoji));
         assert_eq!(topk.count(&p), 1);
         assert_eq!(topk.count(&emoji), 1);
     }
@@ -846,13 +873,13 @@ mod tests {
     fn test_borrow_str_and_slice() {
         let mut topk: BucketedTopK<String> = BucketedTopK::new(10, 100, 4, 0.9);
         topk.add("foo", 1);
-        assert!(topk.query("foo"));
+        assert!(topk.contains("foo"));
         assert_eq!(topk.count("foo"), 1);
 
         let mut topk: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 100, 4, 0.9);
         let item: &[u8] = b"foo";
         topk.add(item, 1);
-        assert!(topk.query(item));
+        assert!(topk.contains(item));
         assert_eq!(topk.count(item), 1);
     }
 
