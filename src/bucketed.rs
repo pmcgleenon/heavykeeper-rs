@@ -314,7 +314,7 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
         use std::mem::size_of;
         self.cells.len() * size_of::<Cell>()
             + self.decay_thresholds.len() * size_of::<u64>()
-            + self.priority_queue.heap_size_bytes()
+            + self.priority_queue.mem_bytes()
     }
 
     /// Merge `other` into `self`. PQ merged first using pre-merge bucket
@@ -575,6 +575,30 @@ impl<T: Ord + Clone + Hash> BucketedBuilder<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_mem_bytes_covers_cells_and_decay_table() {
+        let topk: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 100, 4, 0.9);
+        let cells = 100 * 4 * std::mem::size_of::<Cell>();
+        let decay = DECAY_LOOKUP_SIZE * std::mem::size_of::<u64>();
+        // The fixed cell array and decay table are exact; the priority
+        // queue adds more on top.
+        assert!(topk.mem_bytes() >= cells + decay);
+    }
+
+    #[test]
+    fn test_mem_bytes_grows_with_width() {
+        let small: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 100, 4, 0.9);
+        let large: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 400, 4, 0.9);
+        assert!(large.mem_bytes() > small.mem_bytes());
+    }
+
+    #[test]
+    fn test_mem_bytes_grows_with_depth() {
+        let shallow: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 100, 2, 0.9);
+        let deep: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 100, 8, 0.9);
+        assert!(deep.mem_bytes() > shallow.mem_bytes());
+    }
 
     #[test]
     fn test_new_default_params() {

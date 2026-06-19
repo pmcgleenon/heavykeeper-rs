@@ -40,7 +40,7 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
     /// Computed from allocated *capacity* of the `HashMap`, heap vector,
     /// item store, and free-slot list. Excludes heap owned by individual
     /// `T` values, and the `HashMap` term is an approximation.
-    pub(crate) fn heap_size_bytes(&self) -> usize {
+    pub(crate) fn mem_bytes(&self) -> usize {
         use std::mem::size_of;
         // hashbrown stores each entry as (K, V) plus one control byte.
         let map_entry = size_of::<(T, (u64, usize))>() + 1;
