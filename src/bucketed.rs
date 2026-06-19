@@ -309,6 +309,14 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
         nodes
     }
 
+    /// Estimated heap memory (in bytes) used by this sketch.
+    pub fn mem_bytes(&self) -> usize {
+        use std::mem::size_of;
+        self.cells.len() * size_of::<Cell>()
+            + self.decay_thresholds.len() * size_of::<u64>()
+            + self.priority_queue.heap_size_bytes()
+    }
+
     /// Merge `other` into `self`. PQ merged first using pre-merge bucket
     /// counts as fallback; cells then unioned per bucket by fingerprint
     /// (min-count eviction on full buckets).

@@ -359,6 +359,21 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         nodes
     }
 
+    /// Estimated heap memory (in bytes) used by this sketch.
+    pub fn mem_bytes(&self) -> usize {
+        use std::mem::size_of;
+        let outer = self.buckets.capacity() * size_of::<Vec<Bucket>>();
+        let rows: usize = self
+            .buckets
+            .iter()
+            .map(|row| row.capacity() * size_of::<Bucket>())
+            .sum();
+        outer
+            + rows
+            + self.decay_thresholds.capacity() * size_of::<u64>()
+            + self.priority_queue.heap_size_bytes()
+    }
+
     // Merge another HeavyKeeper into this one
     pub fn merge(&mut self, other: &Self) -> Result<(), HeavyKeeperError> {
         // Verify compatible parameters
