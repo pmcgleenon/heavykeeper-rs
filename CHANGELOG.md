@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.9](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.8...v0.6.9) - 2026-06-19
+
+### Added
+
+- add mem_bytes() to TopK and BucketedTopK
+- add mem_bytes() to CuckooTopK
+
+### Other
+
+- rename query to contains and deprecate query
+- Rename the helper and add tests
+
 ## [0.6.8](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.7...v0.6.8) - 2026-06-17
 
 ### Added
