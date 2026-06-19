@@ -309,13 +309,26 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
         }
     }
 
-    /// Returns true if `item` has a non-zero estimated count.
-    pub fn query<Q>(&self, item: &Q) -> bool
+    /// Returns true if `item` is present in the sketch (its estimated count
+    /// is non-zero). This is a probabilistic membership test and may report
+    /// false positives due to fingerprint collisions; it is *not* the same as
+    /// [`contains_top_k`](Self::contains_top_k), which tests top-k membership.
+    pub fn contains<Q>(&self, item: &Q) -> bool
     where
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
     {
         self.count(item) > 0
+    }
+
+    /// Deprecated alias for [`contains`](Self::contains).
+    #[deprecated(since = "0.6.9", note = "renamed to `contains`")]
+    pub fn query<Q>(&self, item: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
+    {
+        self.contains(item)
     }
 
     /// Returns true if `item` is currently one of the top-k tracked flows
@@ -862,6 +875,16 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
 mod tests {
     use super::*;
 
+    /// The deprecated `query` alias must still compile and delegate to `contains`.
+    #[test]
+    #[allow(deprecated)]
+    fn test_query_alias_delegates_to_contains() {
+        let mut topk: CuckooTopK<Vec<u8>> = CuckooTopK::new(10, 64, 3, 0.9);
+        topk.add(b"alpha".as_slice(), 5);
+        assert_eq!(topk.query(b"alpha".as_slice()), topk.contains(b"alpha".as_slice()));
+        assert_eq!(topk.query(b"missing".as_slice()), topk.contains(b"missing".as_slice()));
+    }
+
     #[test]
     fn test_new_default_params() {
         let topk: CuckooTopK<Vec<u8>> = CuckooTopK::new(10, 64, 3, 0.9);
@@ -905,7 +928,7 @@ mod tests {
         topk.add(b"alpha".as_slice(), 4);
 
         assert_eq!(topk.count(b"alpha".as_slice()), 5);
-        assert!(topk.query(b"alpha".as_slice()));
+        assert!(topk.contains(b"alpha".as_slice()));
         assert_eq!(topk.list()[0].item, b"alpha".to_vec());
         assert_eq!(topk.list()[0].count, 5);
     }
@@ -984,8 +1007,8 @@ mod tests {
         let emoji = "🚀🌟".as_bytes().to_vec();
         topk.add(&p, 1);
         topk.add(&emoji, 1);
-        assert!(topk.query(&p));
-        assert!(topk.query(&emoji));
+        assert!(topk.contains(&p));
+        assert!(topk.contains(&emoji));
         assert_eq!(topk.count(&p), 1);
         assert_eq!(topk.count(&emoji), 1);
     }
@@ -994,13 +1017,13 @@ mod tests {
     fn test_borrow_str_and_slice() {
         let mut topk: CuckooTopK<String> = CuckooTopK::new(10, 100, 4, 0.9);
         topk.add("foo", 1);
-        assert!(topk.query("foo"));
+        assert!(topk.contains("foo"));
         assert_eq!(topk.count("foo"), 1);
 
         let mut topk: CuckooTopK<Vec<u8>> = CuckooTopK::new(10, 100, 4, 0.9);
         let item: &[u8] = b"foo";
         topk.add(item, 1);
-        assert!(topk.query(item));
+        assert!(topk.contains(item));
         assert_eq!(topk.count(item), 1);
     }
 

@@ -24,10 +24,10 @@ fn main() {
     let item = "frequent item";
     println!("\nCount for '{}': {}", item, topk.count(item));
 
-    // Demonstrate the query() method
+    // Demonstrate the contains() method
     println!(
-        "Is '{}' in top-k? {}",
+        "Is '{}' present in the sketch? {}",
         item,
-        if topk.query(item) { "yes" } else { "no" }
+        if topk.contains(item) { "yes" } else { "no" }
     );
 }

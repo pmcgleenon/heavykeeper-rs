@@ -47,7 +47,7 @@ for node in topk.list() {
 
 The crate ships three top-K sketches that share the same public API
 (`new` / `with_seed` / `with_hasher` / `builder` / `add` / `count` /
-`query` / `list` / `merge`):
+`contains` / `list` / `merge`):
 
 | Sketch          | Layout                                           | Insert throughput on Zipf(s=1.2), 1M | Recall @ φ=0.0005 |
 | --------------- | ------------------------------------------------ | -----------------------------------: | ----------------: |

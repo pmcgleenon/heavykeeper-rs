@@ -170,7 +170,11 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         }
     }
 
-    pub fn query<Q>(&self, item: &Q) -> bool
+    /// Returns true if `item` is present in the sketch (its estimated count
+    /// is non-zero). This is a probabilistic membership test and may report
+    /// false positives due to fingerprint collisions; it is *not* the same as
+    /// [`contains_top_k`](Self::contains_top_k), which tests top-k membership.
+    pub fn contains<Q>(&self, item: &Q) -> bool
     where
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
@@ -192,6 +196,16 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         }
 
         min_count != u64::MAX
+    }
+
+    /// Deprecated alias for [`contains`](Self::contains).
+    #[deprecated(since = "0.6.9", note = "renamed to `contains`")]
+    pub fn query<Q>(&self, item: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
+    {
+        self.contains(item)
     }
 
     /// Returns true if `item` is currently one of the top-k tracked flows.
@@ -594,9 +608,9 @@ mod tests {
         assert_eq!(topk.priority_queue.len(), 0);
     }
 
-    /// Tests query functionality for both present and absent items
+    /// Tests contains functionality for both present and absent items
     #[test]
-    fn test_query() {
+    fn test_contains() {
         let mut topk: TopK<Vec<u8>> = TopK::new(10, 100, 5, 0.9);
         let present = b"hello".to_vec();
         let absent = b"world".to_vec();
@@ -604,9 +618,21 @@ mod tests {
         // Add the present item
         topk.add(&present, 1);
 
-        // Verify query behavior
-        assert!(topk.query(&present), "Present item should be found");
-        assert!(!topk.query(&absent), "Absent item should not be found");
+        // Verify contains behavior
+        assert!(topk.contains(&present), "Present item should be found");
+        assert!(!topk.contains(&absent), "Absent item should not be found");
+    }
+
+    /// The deprecated `query` alias must still compile and delegate to `contains`.
+    #[test]
+    #[allow(deprecated)]
+    fn test_query_alias_delegates_to_contains() {
+        let mut topk: TopK<Vec<u8>> = TopK::new(10, 100, 5, 0.9);
+        let present = b"hello".to_vec();
+        let absent = b"world".to_vec();
+        topk.add(&present, 1);
+        assert_eq!(topk.query(&present), topk.contains(&present));
+        assert_eq!(topk.query(&absent), topk.contains(&absent));
     }
 
     /// Tests count functionality for items with varying frequencies
@@ -684,9 +710,9 @@ mod tests {
         topk.add(&mixed, 1);
 
         // Verify presence
-        assert!(topk.query(&p), "text should be found");
-        assert!(topk.query(&emoji), "Emoji should be found");
-        assert!(topk.query(&mixed), "Mixed content should be found");
+        assert!(topk.contains(&p), "text should be found");
+        assert!(topk.contains(&emoji), "Emoji should be found");
+        assert!(topk.contains(&mixed), "Mixed content should be found");
 
         // Verify counts
         assert_eq!(topk.count(&p), 1, "text count should be 1");
@@ -978,8 +1004,8 @@ mod tests {
         );
 
         // Verify presence in top-k
-        assert!(topk.query(&item1), "item1 should be in top-k");
-        assert!(topk.query(&item2), "item2 should be in top-k");
+        assert!(topk.contains(&item1), "item1 should be in top-k");
+        assert!(topk.contains(&item2), "item2 should be in top-k");
     }
 
     /// Tests insertion into empty buckets
@@ -1004,7 +1030,7 @@ mod tests {
         );
 
         // Verify presence in priority queue
-        assert!(topk.query(&item), "Item should be in priority queue");
+        assert!(topk.contains(&item), "Item should be in priority queue");
     }
 
     /// Tests behavior with items of identical frequency
@@ -1253,7 +1279,7 @@ mod tests {
             if new_count == 0 {
                 // Item has been evicted
                 assert!(
-                    !topk.query(&item1),
+                    !topk.contains(&item1),
                     "item1 should be evicted if count is zero"
                 );
                 break;
@@ -1299,9 +1325,9 @@ mod tests {
 
         println!("Initial state:");
         println!("  item1 count: {}", topk.count(&item1));
-        println!("  item1 query: {}", topk.query(&item1));
+        println!("  item1 query: {}", topk.contains(&item1));
         println!("  item2 count: {}", topk.count(&item2));
-        println!("  item2 query: {}", topk.query(&item2));
+        println!("  item2 query: {}", topk.contains(&item2));
 
         // Add item2 once to trigger decay on item1
         let before = topk.bucket_count(&item1);
@@ -1312,9 +1338,9 @@ mod tests {
 
         println!("Final state:");
         println!("  item1 count: {}", topk.count(&item1));
-        println!("  item1 query: {}", topk.query(&item1));
+        println!("  item1 query: {}", topk.contains(&item1));
         println!("  item2 count: {}", topk.count(&item2));
-        println!("  item2 query: {}", topk.query(&item2));
+        println!("  item2 query: {}", topk.contains(&item2));
 
         // After the first decay, item1's bucket count should be decremented by 1
         assert_eq!(
@@ -1326,7 +1352,7 @@ mod tests {
         // Since the count is still > 0, item1 should still be in the bucket
         // and item2 should not have taken over the bucket
         assert!(
-            topk.query(&item1),
+            topk.contains(&item1),
             "Item1 should still be in the bucket after decay"
         );
         assert_eq!(
@@ -1334,7 +1360,7 @@ mod tests {
             9,
             "Item1 bucket count should be 9 after decay"
         );
-        assert!(!topk.query(&item2), "Item2 should not be in the bucket yet");
+        assert!(!topk.contains(&item2), "Item2 should not be in the bucket yet");
         assert_eq!(
             topk.bucket_count(&item2),
             0,
@@ -1405,13 +1431,13 @@ mod tests {
         let mut topk: TopK<String> = TopK::new(10, 100, 5, 0.9);
         let item: &str = "foo";
         topk.add(item, 1);
-        assert!(topk.query(item));
+        assert!(topk.contains(item));
         assert_eq!(topk.count(item), 1);
 
         let mut topk: TopK<Vec<u8>> = TopK::new(10, 100, 5, 0.9);
         let item: &[u8] = b"foo";
         topk.add(item, 1);
-        assert!(topk.query(item));
+        assert!(topk.contains(item));
         assert_eq!(topk.count(item), 1);
     }
 
