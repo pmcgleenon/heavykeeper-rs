@@ -366,6 +366,19 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
         self.max_kicks
     }
 
+    /// Estimated heap memory (in bytes) used by this sketch.
+    ///
+    /// Sums the lobby and heavy cell arrays, the precomputed decay-threshold
+    /// table, and the priority queue's allocations. This is an approximation:
+    /// it excludes heap owned by individual tracked `T` values                                                                        
+    pub fn mem_bytes(&self) -> usize {
+        use std::mem::size_of;
+        self.lobbies.len() * size_of::<Cell>()
+            + self.heavy.len() * size_of::<Cell>()
+            + self.decay_thresholds.len() * size_of::<u64>()
+            + self.priority_queue.mem_bytes()
+    }
+
     /// Merge `other` into `self`. Both sketches must share width, depth,
     /// decay, top_items and a compatible hasher (probe-checked at merge
     /// time). Heavy fingerprints from `other` are re-inserted into the
@@ -858,6 +871,31 @@ mod tests {
         assert_eq!(topk.top_items, 10);
         assert_eq!(topk.lobbies.len(), 64);
         assert_eq!(topk.heavy.len(), 192);
+    }
+
+    #[test]
+    fn test_mem_bytes_covers_cells_and_decay_table() {
+        let topk: CuckooTopK<Vec<u8>> = CuckooTopK::new(10, 64, 3, 0.9);
+        let cell = std::mem::size_of::<Cell>();
+        let lobbies = 64 * cell;
+        let heavy = 64 * 3 * cell;
+        let decay = DECAY_LOOKUP_SIZE * std::mem::size_of::<u64>();
+        // The fixed sketch arrays are exact; the priority queue adds more.
+        assert!(topk.mem_bytes() >= lobbies + heavy + decay);
+    }
+
+    #[test]
+    fn test_mem_bytes_grows_with_width() {
+        let small: CuckooTopK<Vec<u8>> = CuckooTopK::new(10, 64, 3, 0.9);
+        let large: CuckooTopK<Vec<u8>> = CuckooTopK::new(10, 256, 3, 0.9);
+        assert!(large.mem_bytes() > small.mem_bytes());
+    }
+
+    #[test]
+    fn test_mem_bytes_grows_with_depth() {
+        let shallow: CuckooTopK<Vec<u8>> = CuckooTopK::new(10, 64, 2, 0.9);
+        let deep: CuckooTopK<Vec<u8>> = CuckooTopK::new(10, 64, 8, 0.9);
+        assert!(deep.mem_bytes() > shallow.mem_bytes());
     }
 
     #[test]

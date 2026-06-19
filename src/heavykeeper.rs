@@ -359,6 +359,21 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         nodes
     }
 
+    /// Estimated heap memory (in bytes) used by this sketch.
+    pub fn mem_bytes(&self) -> usize {
+        use std::mem::size_of;
+        let outer = self.buckets.capacity() * size_of::<Vec<Bucket>>();
+        let rows: usize = self
+            .buckets
+            .iter()
+            .map(|row| row.capacity() * size_of::<Bucket>())
+            .sum();
+        outer
+            + rows
+            + self.decay_thresholds.capacity() * size_of::<u64>()
+            + self.priority_queue.mem_bytes()
+    }
+
     // Merge another HeavyKeeper into this one
     pub fn merge(&mut self, other: &Self) -> Result<(), HeavyKeeperError> {
         // Verify compatible parameters
@@ -537,6 +552,30 @@ impl<T: Ord + Clone + Hash> Builder<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_mem_bytes_covers_rows_and_decay_table() {
+        let topk: TopK<Vec<u8>> = TopK::new(10, 100, 5, 0.9);
+        let rows = 100 * 5 * std::mem::size_of::<Bucket>();
+        let decay = DECAY_LOOKUP_SIZE * std::mem::size_of::<u64>();
+        // The per-row Bucket allocations and decay table are accounted for;
+        // the outer Vec and priority queue add more on top.
+        assert!(topk.mem_bytes() >= rows + decay);
+    }
+
+    #[test]
+    fn test_mem_bytes_grows_with_width() {
+        let small: TopK<Vec<u8>> = TopK::new(10, 100, 5, 0.9);
+        let large: TopK<Vec<u8>> = TopK::new(10, 400, 5, 0.9);
+        assert!(large.mem_bytes() > small.mem_bytes());
+    }
+
+    #[test]
+    fn test_mem_bytes_grows_with_depth() {
+        let shallow: TopK<Vec<u8>> = TopK::new(10, 100, 2, 0.9);
+        let deep: TopK<Vec<u8>> = TopK::new(10, 100, 8, 0.9);
+        assert!(deep.mem_bytes() > shallow.mem_bytes());
+    }
 
     /// Tests basic initialization of TopK with default parameters
     #[test]
