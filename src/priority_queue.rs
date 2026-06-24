@@ -42,12 +42,26 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
     /// `T` values, and the `HashMap` term is an approximation.
     pub(crate) fn mem_bytes(&self) -> usize {
         use std::mem::size_of;
-        // hashbrown stores each entry as (K, V) plus one control byte.
         let map_entry = size_of::<(T, (u64, usize))>() + 1;
         self.items.capacity() * map_entry
             + self.heap.capacity() * size_of::<(u64, usize, usize)>()
             + self.item_store.capacity() * size_of::<T>()
             + self.free_slots.capacity() * size_of::<usize>()
+    }
+
+    /// Like [`mem_bytes`], plus the heap each live item owns beyond its inline
+    /// `size_of::<T>()`. `item_heap(t)` should return the bytes `t` points to
+    /// (e.g. `Vec::capacity`/`String::capacity`)
+    ///
+    /// Each tracked item is stored twice — once as a `HashMap` key and once in
+    /// `item_store` — so its owned heap is counted twice to match.
+    pub(crate) fn mem_bytes_with<F>(&self, item_heap: F) -> usize
+    where
+        F: Fn(&T) -> usize,
+    {
+        // `items` is the source of truth for which items are live.
+        let item_bytes: usize = self.items.keys().map(|t| item_heap(t)).sum();
+        self.mem_bytes() + 2 * item_bytes
     }
 
     pub(crate) fn get<Q>(&self, item: &Q) -> Option<u64>

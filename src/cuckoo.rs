@@ -383,13 +383,28 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
     ///
     /// Sums the lobby and heavy cell arrays, the precomputed decay-threshold
     /// table, and the priority queue's allocations. This is an approximation:
-    /// it excludes heap owned by individual tracked `T` values                                                                        
+    /// it excludes heap owned by individual tracked `T` values.                                                                       
     pub fn mem_bytes(&self) -> usize {
         use std::mem::size_of;
         self.lobbies.len() * size_of::<Cell>()
             + self.heavy.len() * size_of::<Cell>()
             + self.decay_thresholds.len() * size_of::<u64>()
             + self.priority_queue.mem_bytes()
+    }
+
+    /// Like [`mem_bytes`], but also counts the heap each tracked item owns
+    /// beyond its inline `size_of::<T>()`. `item_heap(t)` should return the
+    /// bytes `t` points to (e.g. `Vec::capacity`/`String::capacity`); for a
+    /// `T` that owns no heap, pass `|_| 0` to recover [`mem_bytes`].
+    pub fn mem_bytes_with<F>(&self, item_heap: F) -> usize
+    where
+        F: Fn(&T) -> usize,
+    {
+        use std::mem::size_of;
+        self.lobbies.len() * size_of::<Cell>()
+            + self.heavy.len() * size_of::<Cell>()
+            + self.decay_thresholds.len() * size_of::<u64>()
+            + self.priority_queue.mem_bytes_with(item_heap)
     }
 
     /// Merge `other` into `self`. Both sketches must share width, depth,
