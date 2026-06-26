@@ -45,12 +45,12 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
     /// public API, but stable in practice across std releases).
     pub(crate) fn mem_bytes(&self) -> usize {
         use std::mem::size_of;
-        // hashbrown internals: `buckets` is the next power of two >= capacity*8/7.
+        // hashbrown internals: `buckets` is the next power of two >= ceil(capacity*8/7).
         let cap = self.items.capacity();
         let buckets = if cap == 0 {
             0
         } else {
-            (cap * 8 / 7).next_power_of_two()
+            ((cap * 8 + 6) / 7).next_power_of_two()
         };
         const GROUP_WIDTH: usize = 16;
         let map_bytes = if buckets == 0 {
