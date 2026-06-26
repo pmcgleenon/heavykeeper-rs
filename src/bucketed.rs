@@ -331,6 +331,20 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
             + self.priority_queue.mem_bytes()
     }
 
+    /// Like [`mem_bytes`](Self::mem_bytes), plus the heap each tracked item
+    /// owns beyond `size_of::<T>()`. `item_heap(t)` returns the bytes `t`
+    /// points to (e.g. `Vec`/`String::capacity`); pass `|_| 0` for a `T` that
+    /// owns no heap.
+    pub fn mem_bytes_with<F>(&self, item_heap: F) -> usize
+    where
+        F: Fn(&T) -> usize,
+    {
+        use std::mem::size_of;
+        self.cells.len() * size_of::<Cell>()
+            + self.decay_thresholds.len() * size_of::<u64>()
+            + self.priority_queue.mem_bytes_with(item_heap)
+    }
+
     /// Merge `other` into `self`. PQ merged first using pre-merge bucket
     /// counts as fallback; cells then unioned per bucket by fingerprint
     /// (min-count eviction on full buckets).

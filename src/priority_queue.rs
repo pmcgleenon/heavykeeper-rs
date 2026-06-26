@@ -75,7 +75,7 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
         F: Fn(&T) -> usize,
     {
         // `items` is the source of truth for which items are live.
-        let item_bytes: usize = self.items.keys().map(|t| item_heap(t)).sum();
+        let item_bytes: usize = self.items.keys().map(item_heap).sum();
         self.mem_bytes() + 2 * item_bytes
     }
 
