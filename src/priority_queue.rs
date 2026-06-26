@@ -50,6 +50,33 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
             + self.free_slots.capacity() * size_of::<usize>()
     }
 
+    /// Sums `f(key)` over every live item in the queue (one copy — the HashMap key).
+    /// Multiply the result by 2 when accounting for both the key and `item_store` copies.
+    pub(crate) fn items_heap_bytes<F: Fn(&T) -> usize>(&self, f: F) -> usize {
+        self.items.keys().map(f).sum()
+    }
+
+    /// Like [`mem_bytes`] but with a corrected HashMap backing-array size.
+    ///
+    /// hashbrown allocates `raw_cap = next_power_of_two(capacity * 8/7)` slots; the
+    /// reported `capacity()` is `raw_cap * 7/8`.  The current formula uses reported
+    /// capacity, undercounting by the difference.  This variant back-calculates
+    /// `raw_cap` and sizes the data + control-byte regions correctly.
+    pub(crate) fn mem_bytes_corrected(&self) -> usize {
+        use std::mem::size_of;
+        let reported = self.items.capacity();
+        let raw_cap = if reported == 0 {
+            0
+        } else {
+            ((reported * 8 + 6) / 7).next_power_of_two()
+        };
+        // data slots + control bytes (one per slot) + 16-byte sentinel group
+        raw_cap * size_of::<(T, (u64, usize))>() + raw_cap + 16
+            + self.heap.capacity() * size_of::<(u64, usize, usize)>()
+            + self.item_store.capacity() * size_of::<T>()
+            + self.free_slots.capacity() * size_of::<usize>()
+    }
+
     pub(crate) fn get<Q>(&self, item: &Q) -> Option<u64>
     where
         T: Borrow<Q>,

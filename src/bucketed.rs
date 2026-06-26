@@ -331,6 +331,35 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
             + self.priority_queue.mem_bytes()
     }
 
+    /// Like [`mem_bytes`] but also accounts for heap owned by each tracked `T`.
+    ///
+    /// `f` should return the number of heap bytes owned by one `T` value
+    /// (e.g. `|v: &Vec<u8>| v.capacity()` for byte-vector keys).  Each item
+    /// is stored twice internally (HashMap key + item_store), so the closure
+    /// result is counted twice per tracked item.
+    pub fn mem_bytes_with<F: Fn(&T) -> usize>(&self, f: F) -> usize {
+        self.mem_bytes() + 2 * self.priority_queue.items_heap_bytes(f)
+    }
+
+    /// Like [`mem_bytes`] but with a corrected HashMap backing-array formula.
+    ///
+    /// `mem_bytes` uses hashbrown's reported `capacity()`, which is 87.5% of
+    /// the actual backing-array size (`raw_cap`).  This variant back-calculates
+    /// `raw_cap` and includes the full data + control-byte region.
+    pub fn mem_bytes_corrected(&self) -> usize {
+        use std::mem::size_of;
+        self.cells.len() * size_of::<Cell>()
+            + self.decay_thresholds.len() * size_of::<u64>()
+            + self.priority_queue.mem_bytes_corrected()
+    }
+
+    /// Combines [`mem_bytes_corrected`] with per-item heap accounting.
+    ///
+    /// This is the most accurate estimate short of a counting allocator.
+    pub fn mem_bytes_corrected_with<F: Fn(&T) -> usize>(&self, f: F) -> usize {
+        self.mem_bytes_corrected() + 2 * self.priority_queue.items_heap_bytes(f)
+    }
+
     /// Merge `other` into `self`. PQ merged first using pre-merge bucket
     /// counts as fallback; cells then unioned per bucket by fingerprint
     /// (min-count eviction on full buckets).

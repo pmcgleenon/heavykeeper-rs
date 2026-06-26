@@ -383,13 +383,32 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
     ///
     /// Sums the lobby and heavy cell arrays, the precomputed decay-threshold
     /// table, and the priority queue's allocations. This is an approximation:
-    /// it excludes heap owned by individual tracked `T` values                                                                        
+    /// it excludes heap owned by individual tracked `T` values
     pub fn mem_bytes(&self) -> usize {
         use std::mem::size_of;
         self.lobbies.len() * size_of::<Cell>()
             + self.heavy.len() * size_of::<Cell>()
             + self.decay_thresholds.len() * size_of::<u64>()
             + self.priority_queue.mem_bytes()
+    }
+
+    /// Like [`mem_bytes`] but also accounts for heap owned by each tracked `T`.
+    pub fn mem_bytes_with<F: Fn(&T) -> usize>(&self, f: F) -> usize {
+        self.mem_bytes() + 2 * self.priority_queue.items_heap_bytes(f)
+    }
+
+    /// Like [`mem_bytes`] but with a corrected HashMap backing-array formula.
+    pub fn mem_bytes_corrected(&self) -> usize {
+        use std::mem::size_of;
+        self.lobbies.len() * size_of::<Cell>()
+            + self.heavy.len() * size_of::<Cell>()
+            + self.decay_thresholds.len() * size_of::<u64>()
+            + self.priority_queue.mem_bytes_corrected()
+    }
+
+    /// Combines [`mem_bytes_corrected`] with per-item heap accounting.
+    pub fn mem_bytes_corrected_with<F: Fn(&T) -> usize>(&self, f: F) -> usize {
+        self.mem_bytes_corrected() + 2 * self.priority_queue.items_heap_bytes(f)
     }
 
     /// Merge `other` into `self`. Both sketches must share width, depth,

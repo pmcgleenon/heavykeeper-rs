@@ -33,6 +33,7 @@ criterion = "0.8.2"
 clap = { version = "4.5.19", features = ["derive"] }
 memmap2 = "0.9.5"
 rand_distr = "0.5"
+dhat = "0.3"
 
 [[bench]]
 name = "topk_add"

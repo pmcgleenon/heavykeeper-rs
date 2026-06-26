@@ -388,6 +388,31 @@ impl<T: Ord + Clone + Hash> TopK<T> {
             + self.priority_queue.mem_bytes()
     }
 
+    /// Like [`mem_bytes`] but also accounts for heap owned by each tracked `T`.
+    pub fn mem_bytes_with<F: Fn(&T) -> usize>(&self, f: F) -> usize {
+        self.mem_bytes() + 2 * self.priority_queue.items_heap_bytes(f)
+    }
+
+    /// Like [`mem_bytes`] but with a corrected HashMap backing-array formula.
+    pub fn mem_bytes_corrected(&self) -> usize {
+        use std::mem::size_of;
+        let outer = self.buckets.capacity() * size_of::<Vec<Bucket>>();
+        let rows: usize = self
+            .buckets
+            .iter()
+            .map(|row| row.capacity() * size_of::<Bucket>())
+            .sum();
+        outer
+            + rows
+            + self.decay_thresholds.capacity() * size_of::<u64>()
+            + self.priority_queue.mem_bytes_corrected()
+    }
+
+    /// Combines [`mem_bytes_corrected`] with per-item heap accounting.
+    pub fn mem_bytes_corrected_with<F: Fn(&T) -> usize>(&self, f: F) -> usize {
+        self.mem_bytes_corrected() + 2 * self.priority_queue.items_heap_bytes(f)
+    }
+
     // Merge another HeavyKeeper into this one
     pub fn merge(&mut self, other: &Self) -> Result<(), HeavyKeeperError> {
         // Verify compatible parameters
