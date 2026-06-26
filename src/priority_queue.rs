@@ -35,15 +35,30 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
         self.items.len()
     }
 
-    /// Returns an estimate of heap memory (in bytes) used by this queue.
+    /// Returns the heap memory (in bytes) used by this queue's containers.
     ///
-    /// Computed from allocated *capacity* of the `HashMap`, heap vector,
-    /// item store, and free-slot list. Excludes heap owned by individual
-    /// `T` values, and the `HashMap` term is an approximation.
+    /// Computed from the allocated *capacity* of the `HashMap`, heap vector,
+    /// item store, and free-slot list. Excludes heap owned by individual `T`
+    /// values (see [`mem_bytes_with`](Self::mem_bytes_with)).
+    ///
+    /// The `HashMap` term mirrors hashbrown's internal SwissTable layout (not
+    /// public API, but stable in practice across std releases).
     pub(crate) fn mem_bytes(&self) -> usize {
         use std::mem::size_of;
-        let map_entry = size_of::<(T, (u64, usize))>() + 1;
-        self.items.capacity() * map_entry
+        // hashbrown internals: `buckets` is the next power of two >= capacity*8/7.
+        let cap = self.items.capacity();
+        let buckets = if cap == 0 {
+            0
+        } else {
+            (cap * 8 / 7).next_power_of_two()
+        };
+        const GROUP_WIDTH: usize = 16;
+        let map_bytes = if buckets == 0 {
+            0
+        } else {
+            buckets * size_of::<(T, (u64, usize))>() + buckets + GROUP_WIDTH
+        };
+        map_bytes
             + self.heap.capacity() * size_of::<(u64, usize, usize)>()
             + self.item_store.capacity() * size_of::<T>()
             + self.free_slots.capacity() * size_of::<usize>()

@@ -382,8 +382,10 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
     /// Estimated heap memory (in bytes) used by this sketch.
     ///
     /// Sums the lobby and heavy cell arrays, the precomputed decay-threshold
-    /// table, and the priority queue's allocations. This is an approximation:
-    /// it excludes heap owned by individual tracked `T` values.                                                                       
+    /// table, and the priority queue's allocations. Excludes heap owned by
+    /// individual tracked `T` values; see [`mem_bytes_with`] to include it.
+    ///
+    /// [`mem_bytes_with`]: Self::mem_bytes_with
     pub fn mem_bytes(&self) -> usize {
         use std::mem::size_of;
         self.lobbies.len() * size_of::<Cell>()
