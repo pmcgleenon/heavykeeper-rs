@@ -35,19 +35,43 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
         self.items.len()
     }
 
-    /// Returns an estimate of heap memory (in bytes) used by this queue.
+    /// Returns the heap memory (in bytes) used by this queue's containers.
     ///
-    /// Computed from allocated *capacity* of the `HashMap`, heap vector,
-    /// item store, and free-slot list. Excludes heap owned by individual
-    /// `T` values, and the `HashMap` term is an approximation.
-    pub(crate) fn mem_bytes(&self) -> usize {
+    /// Computed from the allocated *capacity* of the `HashMap`, heap vector,
+    /// item store, and free-slot list, plus the heap each live item owns beyond
+    /// its inline `size_of::<T>()`. `item_heap(t)` should return the bytes `t`
+    /// points to (e.g. `String::capacity`).
+    ///
+    /// The `HashMap` term mirrors hashbrown's internal SwissTable layout (not
+    /// public API, but stable in practice across std releases).
+    ///
+    /// Each tracked item is stored twice: once as a `HashMap` key and once in
+    /// `item_store`.
+    pub(crate) fn mem_bytes<F>(&self, item_heap: F) -> usize
+    where
+        F: Fn(&T) -> usize,
+    {
         use std::mem::size_of;
-        // hashbrown stores each entry as (K, V) plus one control byte.
-        let map_entry = size_of::<(T, (u64, usize))>() + 1;
-        self.items.capacity() * map_entry
+        // hashbrown internals: `buckets` is the next power of two >= ceil(capacity*8/7).
+        let cap = self.items.capacity();
+        let buckets = if cap == 0 {
+            0
+        } else {
+            ((cap * 8 + 6) / 7).next_power_of_two()
+        };
+        const GROUP_WIDTH: usize = 16;
+        let map_bytes = if buckets == 0 {
+            0
+        } else {
+            buckets * size_of::<(T, (u64, usize))>() + buckets + GROUP_WIDTH
+        };
+        // `items` is the source of truth for which items are live.
+        let item_bytes: usize = self.items.keys().map(item_heap).sum();
+        map_bytes
             + self.heap.capacity() * size_of::<(u64, usize, usize)>()
             + self.item_store.capacity() * size_of::<T>()
             + self.free_slots.capacity() * size_of::<usize>()
+            + 2 * item_bytes
     }
 
     pub(crate) fn get<Q>(&self, item: &Q) -> Option<u64>
