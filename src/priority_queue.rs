@@ -38,12 +38,19 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
     /// Returns the heap memory (in bytes) used by this queue's containers.
     ///
     /// Computed from the allocated *capacity* of the `HashMap`, heap vector,
-    /// item store, and free-slot list. Excludes heap owned by individual `T`
-    /// values (see [`mem_bytes_with`](Self::mem_bytes_with)).
+    /// item store, and free-slot list, plus the heap each live item owns beyond
+    /// its inline `size_of::<T>()`. `item_heap(t)` should return the bytes `t`
+    /// points to (e.g. `Vec::capacity`/`String::capacity`).
     ///
     /// The `HashMap` term mirrors hashbrown's internal SwissTable layout (not
     /// public API, but stable in practice across std releases).
-    pub(crate) fn mem_bytes(&self) -> usize {
+    ///
+    /// Each tracked item is stored twice: once as a `HashMap` key and once in
+    /// `item_store`.
+    pub(crate) fn mem_bytes<F>(&self, item_heap: F) -> usize
+    where
+        F: Fn(&T) -> usize,
+    {
         use std::mem::size_of;
         // hashbrown internals: `buckets` is the next power of two >= ceil(capacity*8/7).
         let cap = self.items.capacity();
@@ -58,25 +65,13 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
         } else {
             buckets * size_of::<(T, (u64, usize))>() + buckets + GROUP_WIDTH
         };
+        // `items` is the source of truth for which items are live.
+        let item_bytes: usize = self.items.keys().map(item_heap).sum();
         map_bytes
             + self.heap.capacity() * size_of::<(u64, usize, usize)>()
             + self.item_store.capacity() * size_of::<T>()
             + self.free_slots.capacity() * size_of::<usize>()
-    }
-
-    /// Like [`mem_bytes`], plus the heap each live item owns beyond its inline
-    /// `size_of::<T>()`. `item_heap(t)` should return the bytes `t` points to
-    /// (e.g. `Vec::capacity`/`String::capacity`)
-    ///
-    /// Each tracked item is stored twice — once as a `HashMap` key and once in
-    /// `item_store` — so its owned heap is counted twice to match.
-    pub(crate) fn mem_bytes_with<F>(&self, item_heap: F) -> usize
-    where
-        F: Fn(&T) -> usize,
-    {
-        // `items` is the source of truth for which items are live.
-        let item_bytes: usize = self.items.keys().map(item_heap).sum();
-        self.mem_bytes() + 2 * item_bytes
+            + 2 * item_bytes
     }
 
     pub(crate) fn get<Q>(&self, item: &Q) -> Option<u64>

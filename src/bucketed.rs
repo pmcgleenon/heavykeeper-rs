@@ -323,26 +323,18 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
         nodes
     }
 
-    /// Estimated heap memory (in bytes) used by this sketch.
-    pub fn mem_bytes(&self) -> usize {
-        use std::mem::size_of;
-        self.cells.len() * size_of::<Cell>()
-            + self.decay_thresholds.len() * size_of::<u64>()
-            + self.priority_queue.mem_bytes()
-    }
-
-    /// Like [`mem_bytes`](Self::mem_bytes), plus the heap each tracked item
-    /// owns beyond `size_of::<T>()`. `item_heap(t)` returns the bytes `t`
-    /// points to (e.g. `Vec`/`String::capacity`); pass `|_| 0` for a `T` that
-    /// owns no heap.
-    pub fn mem_bytes_with<F>(&self, item_heap: F) -> usize
+    /// Estimated heap memory (in bytes) used by this sketch, including the heap
+    /// each tracked item owns beyond `size_of::<T>()`. `item_heap(t)` returns
+    /// the bytes `t` points to (e.g. `Vec`/`String::capacity`); pass `|_| 0`
+    /// for a `T` that owns no heap.
+    pub fn mem_bytes<F>(&self, item_heap: F) -> usize
     where
         F: Fn(&T) -> usize,
     {
         use std::mem::size_of;
         self.cells.len() * size_of::<Cell>()
             + self.decay_thresholds.len() * size_of::<u64>()
-            + self.priority_queue.mem_bytes_with(item_heap)
+            + self.priority_queue.mem_bytes(item_heap)
     }
 
     /// Merge `other` into `self`. PQ merged first using pre-merge bucket
@@ -611,21 +603,21 @@ mod tests {
         let decay = DECAY_LOOKUP_SIZE * std::mem::size_of::<u64>();
         // The fixed cell array and decay table are exact; the priority
         // queue adds more on top.
-        assert!(topk.mem_bytes() >= cells + decay);
+        assert!(topk.mem_bytes(|_| 0) >= cells + decay);
     }
 
     #[test]
     fn test_mem_bytes_grows_with_width() {
         let small: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 100, 4, 0.9);
         let large: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 400, 4, 0.9);
-        assert!(large.mem_bytes() > small.mem_bytes());
+        assert!(large.mem_bytes(|_| 0) > small.mem_bytes(|_| 0));
     }
 
     #[test]
     fn test_mem_bytes_grows_with_depth() {
         let shallow: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 100, 2, 0.9);
         let deep: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 100, 8, 0.9);
-        assert!(deep.mem_bytes() > shallow.mem_bytes());
+        assert!(deep.mem_bytes(|_| 0) > shallow.mem_bytes(|_| 0));
     }
 
     #[test]
