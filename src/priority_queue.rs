@@ -40,7 +40,7 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
     /// Computed from the allocated *capacity* of the `HashMap`, heap vector,
     /// item store, and free-slot list, plus the heap each live item owns beyond
     /// its inline `size_of::<T>()`. `item_heap(t)` should return the bytes `t`
-    /// points to (e.g. `Vec::capacity`/`String::capacity`).
+    /// points to (e.g. `String::capacity`).
     ///
     /// The `HashMap` term mirrors hashbrown's internal SwissTable layout (not
     /// public API, but stable in practice across std releases).

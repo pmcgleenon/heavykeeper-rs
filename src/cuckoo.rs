@@ -384,8 +384,8 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
     /// Sums the lobby and heavy cell arrays, the precomputed decay-threshold
     /// table, and the priority queue's allocations, plus the heap each tracked
     /// item owns beyond its inline `size_of::<T>()`. `item_heap(t)` should
-    /// return the bytes `t` points to (e.g. `Vec::capacity`/`String::capacity`);
-    /// for a `T` that owns no heap, pass `|_| 0`.
+    /// return the bytes `t` points to (e.g. `String::capacity`); for a `T`
+    /// that owns no heap, pass `|_| 0`.
     pub fn mem_bytes<F>(&self, item_heap: F) -> usize
     where
         F: Fn(&T) -> usize,

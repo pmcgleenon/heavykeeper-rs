@@ -375,7 +375,7 @@ impl<T: Ord + Clone + Hash> TopK<T> {
 
     /// Estimated heap memory (in bytes) used by this sketch, including the heap
     /// each tracked item owns beyond `size_of::<T>()`. `item_heap(t)` returns
-    /// the bytes `t` points to (e.g. `Vec`/`String::capacity`); pass `|_| 0`
+    /// the bytes `t` points to (e.g. `String::capacity`); pass `|_| 0`
     /// for a `T` that owns no heap.
     pub fn mem_bytes<F>(&self, item_heap: F) -> usize
     where
