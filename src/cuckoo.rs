@@ -236,21 +236,20 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
         let _ = self.add_with_evicted(item, increment);
     }
 
-    /// Same as [`add`], but returns the top-k item that was displaced from
-    /// the priority queue by this call, if any. An eviction happens only
-    /// when the priority queue is at capacity and `item` reaches a count
-    /// strictly greater than the current minimum tracked count. Returns
-    /// `None` when nothing was evicted (queue not yet full, item already
-    /// tracked, or count too low to displace the current min).
+    /// Same as [`add`], but returns `(evicted, inserted)`: `evicted` is the
+    /// top-k item displaced from a full priority queue by this call (if any),
+    /// and `inserted` is `true` when `item` became newly tracked (into free
+    /// space, or by displacing `evicted`). Updating an already-tracked item,
+    /// or a count too low to be tracked, yields `(None, false)`.
     ///
     /// [`add`]: CuckooTopK::add
-    pub fn add_with_evicted<Q>(&mut self, item: &Q, increment: u64) -> Option<T>
+    pub fn add_with_evicted<Q>(&mut self, item: &Q, increment: u64) -> (Option<T>, bool)
     where
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
     {
         if increment == 0 {
-            return None;
+            return (None, false);
         }
 
         let fp = self.hasher.hash_one(item);
@@ -261,13 +260,16 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
             return self.update_priority_queue(item, self.heavy[idx].count);
         }
 
-        let lobby_count = self.update_lobby(primary, fp, increment)?;
+        let lobby_count = match self.update_lobby(primary, fp, increment) {
+            Some(c) => c,
+            None => return (None, false),
+        };
 
         if self.promote(fp, lobby_count, primary, alternate) {
             self.clear_lobby(primary, fp);
             return self.update_priority_queue(item, lobby_count);
         }
-        None
+        (None, false)
     }
 
     /// Estimated count for `item`. Consults the priority queue first
@@ -740,7 +742,7 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
         ((last.powf(q) * rem_thr) * u64::MAX as f64) as u64
     }
 
-    fn update_priority_queue<Q>(&mut self, item: &Q, count: u64) -> Option<T>
+    fn update_priority_queue<Q>(&mut self, item: &Q, count: u64) -> (Option<T>, bool)
     where
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
@@ -750,16 +752,18 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
                 self.priority_queue.update_if_present(item, count);
                 self.min_pq_count = self.priority_queue.min_count();
             }
-            return None;
+            return (None, false);
         }
 
         if self.priority_queue.is_full() && count <= self.min_pq_count {
-            return None;
+            return (None, false);
         }
 
+        let had_room = !self.priority_queue.is_full();
         let evicted = self.priority_queue.upsert(item.to_owned(), count);
         self.min_pq_count = self.priority_queue.min_count();
-        evicted
+        let inserted = evicted.is_some() || had_room;
+        (evicted, inserted)
     }
 }
 
@@ -1359,20 +1363,24 @@ mod tests {
 
         // Pump enough to force promotion into heavy slots so PQ gets
         // populated.
-        let none1 = topk.add_with_evicted(&b"a".to_vec(), 5);
-        let none2 = topk.add_with_evicted(&b"b".to_vec(), 10);
-        assert!(none1.is_none(), "first add should not evict");
-        assert!(
-            none2.is_none(),
-            "second add (still under k) should not evict"
+        // New keys into free space: no eviction, but inserted.
+        assert_eq!(
+            topk.add_with_evicted(&b"a".to_vec(), 5),
+            (None, true),
+            "first add should insert without evicting"
+        );
+        assert_eq!(
+            topk.add_with_evicted(&b"b".to_vec(), 10),
+            (None, true),
+            "second add (still under k) should insert without evicting"
         );
 
         // Sanity-check both items reached the priority queue.
         let list = topk.list();
         assert_eq!(list.len(), 2);
-        let evicted = topk.add_with_evicted(&b"c".to_vec(), 20);
-        let evicted = evicted.expect("expected an eviction");
-        assert_eq!(evicted, b"a".to_vec());
+        let (evicted, inserted) = topk.add_with_evicted(&b"c".to_vec(), 20);
+        assert_eq!(evicted.expect("expected an eviction"), b"a".to_vec());
+        assert!(inserted);
 
         // PQ now holds b and c.
         let list = topk.list();
@@ -1386,23 +1394,23 @@ mod tests {
     fn test_add_with_evicted_no_eviction_cases() {
         let mut topk: CuckooTopK<Vec<u8>> = CuckooTopK::new(2, 64, 2, 0.9);
 
-        // increment == 0 → no work, no eviction.
-        assert!(topk.add_with_evicted(&b"a".to_vec(), 0).is_none());
+        // increment == 0 → no work, nothing tracked.
+        assert_eq!(topk.add_with_evicted(&b"a".to_vec(), 0), (None, false));
 
-        // PQ not yet full → no eviction.
-        assert!(topk.add_with_evicted(&b"a".to_vec(), 5).is_none());
-        assert!(topk.add_with_evicted(&b"b".to_vec(), 10).is_none());
+        // PQ not yet full → no eviction, but inserted.
+        assert_eq!(topk.add_with_evicted(&b"a".to_vec(), 5), (None, true));
+        assert_eq!(topk.add_with_evicted(&b"b".to_vec(), 10), (None, true));
 
-        // Updating an already-tracked item → no eviction even at capacity.
-        assert!(topk.add_with_evicted(&b"a".to_vec(), 1).is_none());
+        // Updating an already-tracked item → neither evicted nor inserted.
+        assert_eq!(topk.add_with_evicted(&b"a".to_vec(), 1), (None, false));
 
         // New item with count not high enough to beat the PQ minimum (5)
-        // → no eviction. Use a fresh sketch so heavy slots are free for
+        // → nothing tracked. Use a fresh sketch so heavy slots are free for
         // promotion.
         let mut topk: CuckooTopK<Vec<u8>> = CuckooTopK::new(2, 64, 2, 0.9);
         topk.add_with_evicted(&b"hot".to_vec(), 50);
         topk.add_with_evicted(&b"warm".to_vec(), 30);
-        assert!(topk.add_with_evicted(&b"cold".to_vec(), 10).is_none());
+        assert_eq!(topk.add_with_evicted(&b"cold".to_vec(), 10), (None, false));
     }
 
     #[test]
