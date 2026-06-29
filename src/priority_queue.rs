@@ -59,7 +59,16 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
         } else {
             ((cap * 8 + 6) / 7).next_power_of_two()
         };
+        #[cfg(all(
+            target_feature = "sse2",
+            any(target_arch = "x86", target_arch = "x86_64")
+        ))]
         const GROUP_WIDTH: usize = 16;
+        #[cfg(not(all(
+            target_feature = "sse2",
+            any(target_arch = "x86", target_arch = "x86_64")
+        )))]
+        const GROUP_WIDTH: usize = 8;
         let map_bytes = if buckets == 0 {
             0
         } else {
