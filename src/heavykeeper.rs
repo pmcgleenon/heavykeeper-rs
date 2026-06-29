@@ -337,6 +337,11 @@ impl<T: Ord + Clone + Hash> TopK<T> {
             return (None, false);
         }
 
+        // All rows rejected the item: no count, so don't track it.
+        if max_count == 0 {
+            return (None, false);
+        }
+
         if self.priority_queue.is_full() && max_count <= self.priority_queue.min_count() {
             return (None, false);
         }
