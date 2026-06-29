@@ -381,8 +381,14 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         nodes
     }
 
-    /// Estimated heap memory (in bytes) used by this sketch.
-    pub fn mem_bytes(&self) -> usize {
+    /// Estimated heap memory (in bytes) used by this sketch, including the heap
+    /// each tracked item owns beyond `size_of::<T>()`. `item_heap(t)` returns
+    /// the bytes `t` points to (e.g. `String::capacity`); pass `|_| 0`
+    /// for a `T` that owns no heap.
+    pub fn mem_bytes<F>(&self, item_heap: F) -> usize
+    where
+        F: Fn(&T) -> usize,
+    {
         use std::mem::size_of;
         let outer = self.buckets.capacity() * size_of::<Vec<Bucket>>();
         let rows: usize = self
@@ -393,7 +399,7 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         outer
             + rows
             + self.decay_thresholds.capacity() * size_of::<u64>()
-            + self.priority_queue.mem_bytes()
+            + self.priority_queue.mem_bytes(item_heap)
     }
 
     // Merge another HeavyKeeper into this one
@@ -582,21 +588,21 @@ mod tests {
         let decay = DECAY_LOOKUP_SIZE * std::mem::size_of::<u64>();
         // The per-row Bucket allocations and decay table are accounted for;
         // the outer Vec and priority queue add more on top.
-        assert!(topk.mem_bytes() >= rows + decay);
+        assert!(topk.mem_bytes(|_| 0) >= rows + decay);
     }
 
     #[test]
     fn test_mem_bytes_grows_with_width() {
         let small: TopK<Vec<u8>> = TopK::new(10, 100, 5, 0.9);
         let large: TopK<Vec<u8>> = TopK::new(10, 400, 5, 0.9);
-        assert!(large.mem_bytes() > small.mem_bytes());
+        assert!(large.mem_bytes(|_| 0) > small.mem_bytes(|_| 0));
     }
 
     #[test]
     fn test_mem_bytes_grows_with_depth() {
         let shallow: TopK<Vec<u8>> = TopK::new(10, 100, 2, 0.9);
         let deep: TopK<Vec<u8>> = TopK::new(10, 100, 8, 0.9);
-        assert!(deep.mem_bytes() > shallow.mem_bytes());
+        assert!(deep.mem_bytes(|_| 0) > shallow.mem_bytes(|_| 0));
     }
 
     /// Tests basic initialization of TopK with default parameters
