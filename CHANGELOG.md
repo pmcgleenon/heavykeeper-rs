@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.9...v0.7.0) - 2026-06-29
+
+### Added
+
+- return (evicted, inserted) from add_with_evicted
+
+### Fixed
+
+- don't track zero-count items in add_with_evicted
+
+### Other
+
+- Merge pull request #89 from detemmienation/mem
+
 ## [0.6.9](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.8...v0.6.9) - 2026-06-19
 
 ### Added
