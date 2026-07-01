@@ -22,7 +22,7 @@ path = "src/lib.rs"
 
 [dependencies]
 rand = { version = "0.9.0", features = [ "small_rng" ] }
-ahash = { git = "https://github.com/alexeysofin/aHash.git", rev = "b917333a498311d193a8c2084e88dd18561b264f" }
+ahash = "0.8.11"
 serde = { version = "1.0.117", optional = true }
 thiserror = "2.0.11"
 
@@ -43,7 +43,7 @@ name = "topk_add"
 harness = false
 
 [features]
-serde = ["ahash/serde", "serde/derive"]
+serde = ["serde/derive"]
 
 [[bench]]
 name = "topk_list"
