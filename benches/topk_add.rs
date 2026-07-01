@@ -2,11 +2,13 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use heavykeeper::TopK;
 use rand::distr::StandardUniform;
 use rand::prelude::*;
+use rustc_hash::FxBuildHasher;
 use std::hint::black_box;
 
 fn benchmark_topk_add(c: &mut Criterion, num_adds: usize) {
     let mut rng = rand::rng();
-    let mut topk = TopK::new(10, 1024, 2, 0.95);
+    let mut topk_ahash = TopK::new(10, 1024, 2, 0.95);
+    let mut topk_fx = TopK::with_hasher(10, 1024, 2, 0.95, FxBuildHasher);
 
     let mut data = vec![];
     for _ in 0..num_adds {
@@ -19,10 +21,18 @@ fn benchmark_topk_add(c: &mut Criterion, num_adds: usize) {
     group.warm_up_time(std::time::Duration::from_secs(3));
     group.measurement_time(std::time::Duration::from_secs(10));
 
-    group.bench_function("Add", |b| {
+    group.bench_function("ahash", |b| {
         b.iter(|| {
             for &key in data.iter() {
-                topk.add(black_box(&key), 1);
+                topk_ahash.add(black_box(&key), 1);
+            }
+        });
+    });
+
+    group.bench_function("fxhash", |b| {
+        b.iter(|| {
+            for &key in data.iter() {
+                topk_fx.add(black_box(&key), 1);
             }
         });
     });

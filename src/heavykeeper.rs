@@ -6,7 +6,7 @@ use rand::{RngCore, SeedableRng};
 use std::borrow::Borrow;
 use std::clone::Clone;
 use std::fmt::Debug;
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash};
 use thiserror::Error;
 
 #[cfg(feature = "serde")]
@@ -63,17 +63,33 @@ pub enum HeavyKeeperError {
         self_items: usize,
         other_items: usize,
     },
-}
 
-#[derive(Error, Debug)]
-pub enum BuilderError {
-    #[error("Missing required field: {field}")]
-    MissingField { field: String },
+    #[error("Missing required field: k")]
+    MissingK,
+
+    #[error("Missing required field: width")]
+    MissingWidth,
+
+    #[error("Missing required field: depth")]
+    MissingDepth,
+
+    #[error("Missing required field: decay")]
+    MissingDecay,
+
+    #[error("Missing required field: hasher")]
+    MissingHasher,
 }
 
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub struct TopK<T: Ord + Clone + Hash> {
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "T: Serialize",
+        deserialize = "T: Deserialize<'de> + Ord + Clone + Hash + Eq, S: BuildHasher + Clone + Default"
+    ))
+)]
+pub struct TopK<T: Ord + Clone + Hash, S: BuildHasher + Clone = RandomState> {
     top_items: usize,
     width: usize,
     /// Non-zero when `width` is a power of two and `> 1`; the bucket
@@ -83,8 +99,9 @@ pub struct TopK<T: Ord + Clone + Hash> {
     decay: f64,
     decay_thresholds: Vec<u64>,
     buckets: Vec<Vec<Bucket>>,
-    priority_queue: TopKQueue<T>,
-    hasher: RandomState,
+    priority_queue: TopKQueue<T, S>,
+    #[cfg_attr(feature = "serde", serde(skip, default))]
+    hasher: S,
     #[cfg_attr(feature = "serde", serde(skip, default = "default_rng"))]
     random: SmallRng,
 }
@@ -94,13 +111,13 @@ fn default_rng() -> SmallRng {
     SmallRng::seed_from_u64(0)
 }
 
-pub struct Builder<T> {
+pub struct Builder<T, S: BuildHasher + Clone = RandomState> {
     k: Option<usize>,
     width: Option<usize>,
     depth: Option<usize>,
     decay: Option<f64>,
     seed: Option<u64>,
-    hasher: Option<RandomState>,
+    hasher: Option<S>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -115,37 +132,12 @@ fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Vec<u64> {
     thresholds
 }
 
-impl<T: Ord + Clone + Hash> TopK<T> {
-    pub fn builder() -> Builder<T> {
+impl<T: Ord + Clone + Hash, S: BuildHasher + Clone> TopK<T, S> {
+    pub fn builder() -> Builder<T, S> {
         Builder::new()
     }
 
-    pub fn new(k: usize, width: usize, depth: usize, decay: f64) -> Self {
-        // Use a consistent seed for default initialization
-        let seed = 12345; // Arbitrary but fixed seed
-        Self::with_seed(k, width, depth, decay, seed)
-    }
-
-    // New constructor that takes a seed
-    pub fn with_seed(k: usize, width: usize, depth: usize, decay: f64, seed: u64) -> Self {
-        let hasher = RandomState::with_seeds(seed, seed, seed, seed);
-        Self::with_components(
-            k,
-            width,
-            depth,
-            decay,
-            hasher,
-            SmallRng::seed_from_u64(seed),
-        )
-    }
-
-    pub fn with_hasher(
-        k: usize,
-        width: usize,
-        depth: usize,
-        decay: f64,
-        hasher: RandomState,
-    ) -> Self {
+    pub fn with_hasher(k: usize, width: usize, depth: usize, decay: f64, hasher: S) -> Self {
         Self::with_components(k, width, depth, decay, hasher, SmallRng::seed_from_u64(0))
     }
 
@@ -154,7 +146,7 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         width: usize,
         depth: usize,
         decay: f64,
-        hasher: RandomState,
+        hasher: S,
         rng: SmallRng,
     ) -> Self {
         // Pre-allocate with capacity to avoid resizing
@@ -216,7 +208,28 @@ impl<T: Ord + Clone + Hash> TopK<T> {
 
         min_count != u64::MAX
     }
+}
 
+impl<T: Ord + Clone + Hash> TopK<T> {
+    pub fn new(k: usize, width: usize, depth: usize, decay: f64) -> Self {
+        let seed = 12345;
+        Self::with_seed(k, width, depth, decay, seed)
+    }
+
+    pub fn with_seed(k: usize, width: usize, depth: usize, decay: f64, seed: u64) -> Self {
+        let hasher = RandomState::with_seeds(seed, seed, seed, seed);
+        Self::with_components(
+            k,
+            width,
+            depth,
+            decay,
+            hasher,
+            SmallRng::seed_from_u64(seed),
+        )
+    }
+}
+
+impl<T: Ord + Clone + Hash, S: BuildHasher + Clone> TopK<T, S> {
     /// Deprecated alias for [`contains`](Self::contains).
     #[deprecated(since = "0.6.9", note = "renamed to `contains`")]
     pub fn query<Q>(&self, item: &Q) -> bool
@@ -480,7 +493,7 @@ impl<T: Ord + Clone + Hash> TopK<T> {
     }
 }
 
-impl<T: Ord + Clone + Hash + Debug> TopK<T> {
+impl<T: Ord + Clone + Hash + Debug, S: BuildHasher + Clone> TopK<T, S> {
     pub fn debug(&self) {
         println!("width: {}", self.width);
         println!("depth: {}", self.depth);
@@ -523,13 +536,13 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
     }
 }
 
-impl<T: Ord + Clone + Hash> Default for Builder<T> {
+impl<T: Ord + Clone + Hash, S: BuildHasher + Clone> Default for Builder<T, S> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Ord + Clone + Hash> Builder<T> {
+impl<T: Ord + Clone + Hash, S: BuildHasher + Clone> Builder<T, S> {
     pub fn new() -> Self {
         Self {
             k: None,
@@ -567,24 +580,36 @@ impl<T: Ord + Clone + Hash> Builder<T> {
         self
     }
 
-    pub fn hasher(mut self, hasher: RandomState) -> Self {
-        self.hasher = Some(hasher);
-        self
+    pub fn hasher<S2: BuildHasher + Clone>(self, hasher: S2) -> Builder<T, S2> {
+        Builder {
+            k: self.k,
+            width: self.width,
+            depth: self.depth,
+            decay: self.decay,
+            seed: self.seed,
+            hasher: Some(hasher),
+            _phantom: std::marker::PhantomData,
+        }
     }
 
-    pub fn build(self) -> Result<TopK<T>, BuilderError> {
-        let k = self.k.ok_or_else(|| BuilderError::MissingField {
-            field: "k".to_string(),
-        })?;
-        let width = self.width.ok_or_else(|| BuilderError::MissingField {
-            field: "width".to_string(),
-        })?;
-        let depth = self.depth.ok_or_else(|| BuilderError::MissingField {
-            field: "depth".to_string(),
-        })?;
-        let decay = self.decay.ok_or_else(|| BuilderError::MissingField {
-            field: "decay".to_string(),
-        })?;
+    pub fn build_with_hasher(self) -> Result<TopK<T, S>, HeavyKeeperError> {
+        let k = self.k.ok_or(HeavyKeeperError::MissingK)?;
+        let width = self.width.ok_or(HeavyKeeperError::MissingWidth)?;
+        let depth = self.depth.ok_or(HeavyKeeperError::MissingDepth)?;
+        let decay = self.decay.ok_or(HeavyKeeperError::MissingDecay)?;
+        let hasher = self.hasher.ok_or(HeavyKeeperError::MissingHasher)?;
+        let rng = SmallRng::seed_from_u64(self.seed.unwrap_or(0));
+
+        Ok(TopK::with_components(k, width, depth, decay, hasher, rng))
+    }
+}
+
+impl<T: Ord + Clone + Hash> Builder<T, RandomState> {
+    pub fn build(self) -> Result<TopK<T>, HeavyKeeperError> {
+        let k = self.k.ok_or(HeavyKeeperError::MissingK)?;
+        let width = self.width.ok_or(HeavyKeeperError::MissingWidth)?;
+        let depth = self.depth.ok_or(HeavyKeeperError::MissingDepth)?;
+        let decay = self.decay.ok_or(HeavyKeeperError::MissingDecay)?;
 
         let hasher = self.hasher.unwrap_or_else(|| {
             if let Some(seed) = self.seed {
@@ -603,6 +628,7 @@ impl<T: Ord + Clone + Hash> Builder<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustc_hash::FxBuildHasher;
 
     #[test]
     fn test_mem_bytes_covers_rows_and_decay_table() {
@@ -643,6 +669,16 @@ mod tests {
         assert_eq!(topk.buckets.len(), 5);
         assert_eq!(topk.buckets[0].len(), 100);
         assert_eq!(topk.priority_queue.len(), 0);
+    }
+
+    #[test]
+    fn test_with_fx_hasher() {
+        let mut topk_fx = TopK::with_hasher(10, 1024, 2, 0.95, FxBuildHasher);
+
+        topk_fx.add(&42_u64, 3);
+
+        assert!(topk_fx.contains(&42_u64));
+        assert_eq!(topk_fx.count(&42_u64), 3);
     }
 
     /// Tests contains functionality for both present and absent items
@@ -1448,11 +1484,11 @@ mod tests {
             .depth(5)
             .decay(0.9)
             .build();
-        assert!(matches!(result, Err(BuilderError::MissingField { field }) if field == "k"));
+        assert!(matches!(result, Err(HeavyKeeperError::MissingK)));
 
         // Test missing width
         let result = TopK::<Vec<u8>>::builder().k(10).depth(5).decay(0.9).build();
-        assert!(matches!(result, Err(BuilderError::MissingField { field }) if field == "width"));
+        assert!(matches!(result, Err(HeavyKeeperError::MissingWidth)));
 
         // Test missing depth
         let result = TopK::<Vec<u8>>::builder()
@@ -1460,11 +1496,11 @@ mod tests {
             .width(100)
             .decay(0.9)
             .build();
-        assert!(matches!(result, Err(BuilderError::MissingField { field }) if field == "depth"));
+        assert!(matches!(result, Err(HeavyKeeperError::MissingDepth)));
 
         // Test missing decay
         let result = TopK::<Vec<u8>>::builder().k(10).width(100).depth(5).build();
-        assert!(matches!(result, Err(BuilderError::MissingField { field }) if field == "decay"));
+        assert!(matches!(result, Err(HeavyKeeperError::MissingDecay)));
     }
 
     #[test]
@@ -1501,6 +1537,7 @@ mod tests {
         assert_eq!(topk.count(item), 1);
     }
 
+    #[cfg(feature = "serde")]
     #[test]
     fn test_serialize() {
         let mut topk: TopK<String> = TopK::new(10, 100, 5, 0.9);
@@ -1519,7 +1556,36 @@ mod tests {
         assert_eq!(topk.decay_thresholds, deserialized.decay_thresholds);
 
         assert_eq!(topk.buckets, deserialized.buckets);
-        assert_eq!(topk.priority_queue, deserialized.priority_queue);
+        assert_eq!(topk.list(), deserialized.list());
+
+        // check merges work
+
+        topk.merge(&deserialized).expect("merge failed");
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_serialize_with_fx_hasher() {
+        let mut topk: TopK<String, FxBuildHasher> =
+            TopK::with_hasher(10, 100, 5, 0.9, FxBuildHasher);
+
+        for i in 0..10 {
+            topk.add(&format!("test{}", i), 10);
+        }
+
+        let serialized = bincode::serialize(&topk).expect("failed to serialize");
+        let deserialized: TopK<String, FxBuildHasher> =
+            bincode::deserialize(&serialized).expect("failed to deserialize");
+
+        assert_eq!(topk.top_items, deserialized.top_items);
+        assert_eq!(topk.width, deserialized.width);
+        assert_eq!(topk.decay, deserialized.decay);
+        assert_eq!(topk.decay_thresholds, deserialized.decay_thresholds);
+
+        assert_eq!(topk.buckets, deserialized.buckets);
+        assert_eq!(topk.list(), deserialized.list());
+        assert!(deserialized.contains("test0"));
+        assert_eq!(deserialized.count("test0"), 10);
 
         // check merges work
 

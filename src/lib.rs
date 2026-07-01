@@ -5,7 +5,7 @@
 //! Shigang Chen, University of Florida; Lorna Uden, Staffordshire University; Xiaoming Li, Peking University
 
 mod heavykeeper;
-pub use heavykeeper::{TopK, TopKNode};
+pub use heavykeeper::{HeavyKeeperError, TopK, TopKNode};
 
 mod bucketed;
 pub use bucketed::{BucketedBuilderError, BucketedMergeError, BucketedNode, BucketedTopK};

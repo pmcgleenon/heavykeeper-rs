@@ -1,7 +1,7 @@
 use ahash::RandomState;
 use std::borrow::Borrow;
 use std::collections::HashMap;
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -9,17 +9,32 @@ use serde::{Deserialize, Serialize};
 /// A specialized priority queue for HeavyKeeper that maintains top-k items by count
 #[derive(Clone, PartialEq, Debug)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub(crate) struct TopKQueue<T: Ord + Clone + Hash + PartialEq> {
-    items: HashMap<T, (u64, usize), RandomState>, // item -> (count, heap_index)
-    heap: Vec<(u64, usize, usize)>,               // (count, sequence, item_index)
-    item_store: Vec<T>,                           // Store actual items here
-    free_slots: Vec<usize>,                       // Track free slots in item_store
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "T: Serialize",
+        deserialize = "T: Deserialize<'de> + Eq + Hash, S: Default"
+    ))
+)]
+pub(crate) struct TopKQueue<T: Ord + Clone + Hash + PartialEq, S: BuildHasher + Clone = RandomState>
+{
+    items: HashMap<T, (u64, usize), S>,
+    heap: Vec<(u64, usize, usize)>,
+    item_store: Vec<T>,
+    free_slots: Vec<usize>,
     capacity: usize,
     sequence: usize,
 }
 
-impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
-    pub(crate) fn with_capacity_and_hasher(capacity: usize, hasher: RandomState) -> Self {
+impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T, RandomState> {
+    #[allow(dead_code)]
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
+        Self::with_capacity_and_hasher(capacity, RandomState::new())
+    }
+}
+
+impl<T: Ord + Clone + Hash + PartialEq, S: BuildHasher + Clone> TopKQueue<T, S> {
+    pub(crate) fn with_capacity_and_hasher(capacity: usize, hasher: S) -> Self {
         Self {
             items: HashMap::with_capacity_and_hasher(capacity, hasher),
             heap: Vec::with_capacity(capacity + 1),
@@ -28,11 +43,6 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
             capacity,
             sequence: 0,
         }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn with_capacity(capacity: usize) -> Self {
-        Self::with_capacity_and_hasher(capacity, RandomState::new())
     }
 
     pub(crate) fn len(&self) -> usize {

@@ -72,8 +72,8 @@ Pick by workload:
 - **`CuckooTopK`** — best accuracy *and* throughput on heavy-hitter-skewed traffic (the elephant-flow use case). Each bucket has a single lobby cell with probabilistic decay plus `depth` non-decaying heavy slots; promoted items live in one of two cuckoo candidate buckets and are re-homed on collision via a kick chain (bound configurable via `CuckooBuilder::max_kicks`, default 8).
 
 All three support seedable construction, custom hashers, and `merge`
-between compatible instances. Errors are returned via
-`BuilderError`/`MergeError` enums; the infallible constructors
+between compatible instances. `TopK` returns `HeavyKeeperError`; derived
+variants use their own builder/merge error enums. The infallible constructors
 (`new`, `with_seed`, `with_hasher`) trust the caller. Bucket indexing
 uses an AND-mask fast-path when `width` is a power of two; pick
 power-of-two widths in production for the best per-add cost.
