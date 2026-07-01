@@ -43,7 +43,55 @@ for node in topk.list() {
 }
 ```
 
-# Other Implementations
+# Variants
+
+The crate ships three top-K sketches that share the same public API
+(`new` / `with_seed` / `with_hasher` / `builder` / `add` / `count` /
+`contains` / `list` / `merge`):
+
+| Sketch          | Layout                                           | Insert throughput on Zipf(s=1.2), 1M | Recall @ φ=0.0005 |
+| --------------- | ------------------------------------------------ | -----------------------------------: | ----------------: |
+| `TopK`          | `depth` independent rows × `width` buckets        |                       21.0 Melem / s |             0.942 |
+| `BucketedTopK`  | one bucket of `depth` cells per key               |                       29.0 Melem / s |             0.985 |
+| `CuckooTopK`    | per-bucket lobby + `depth` heavy slots, 2-bucket cuckoo |                       29.8 Melem / s |             1.000 |
+
+Numbers are from `cargo bench --bench topk_vs_bucketed` at `K=100,
+width=4096, depth=4, decay=0.9` on `u64` keys. Recall is from
+`tests/accuracy_compare.rs` (paper-style heavy-hitter test, φ = 0.0005,
+1 M Zipf samples).
+
+`TopK` is the canonical implementation from the paper, with its
+accuracy bounds. `BucketedTopK` and `CuckooTopK` are derived variants —
+they don't carry the paper's row-independence accuracy bounds, but the
+empirical accuracy on Zipf streams is competitive and often better.
+
+Pick by workload:
+
+- **`TopK`** — when you want the published algorithm and its bounds.
+- **`BucketedTopK`** — best general-purpose insert throughput; closest to `TopK`'s cost model with a single bucket per key.
+- **`CuckooTopK`** — best accuracy *and* throughput on heavy-hitter-skewed traffic (the elephant-flow use case). Each bucket has a single lobby cell with probabilistic decay plus `depth` non-decaying heavy slots; promoted items live in one of two cuckoo candidate buckets and are re-homed on collision via a kick chain (bound configurable via `CuckooBuilder::max_kicks`, default 8).
+
+All three support seedable construction, custom hashers, and `merge`
+between compatible instances. Errors are returned via
+`BuilderError`/`MergeError` enums; the infallible constructors
+(`new`, `with_seed`, `with_hasher`) trust the caller. Bucket indexing
+uses an AND-mask fast-path when `width` is a power of two; pick
+power-of-two widths in production for the best per-add cost.
+
+# Real-world packet trace
+
+`examples/ip_files.rs` runs all three sketches over a CAIDA-style trace
+(27.5 M packets, 1.03 M distinct 13-byte flow keys = src IP : src port →
+dst IP : dst port + protocol). Same `K=1000, decay=0.95`, equal cell
+budgets across variants:
+
+| Sketch          | Width × depth          | Throughput | hit\_ratio | ARE on reported | ARE on true top-K |
+| --------------- | ---------------------- | ---------: | ---------: | --------------: | ----------------: |
+| `TopK`          | 16384 × 2              | 14.1 Mpps  |     0.9270 |          0.0050 |            0.0745 |
+| `BucketedTopK`  | 8192 × 4               | 18.1 Mpps  |     0.9860 |          0.0035 |            0.0129 |
+| `CuckooTopK`    | 8192 × (1 + 4 heavy)   | 17.0 Mpps  | **0.9990** |      **0.0012** |        **0.0012** |
+
+# Other HeavyKeeper Implementations
 
 | Name                       | Language | Github Repo                                                                  |
 |----------------------------|----------|------------------------------------------------------------------------------|

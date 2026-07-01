@@ -1,8 +1,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use std::hint::black_box;
-use rand::prelude::*;
-use rand::distr::StandardUniform;
 use heavykeeper::TopK;
+use rand::distr::StandardUniform;
+use rand::prelude::*;
+use std::hint::black_box;
 
 fn benchmark_topk_add(c: &mut Criterion, num_adds: usize) {
     let mut rng = rand::rng();
@@ -15,9 +15,9 @@ fn benchmark_topk_add(c: &mut Criterion, num_adds: usize) {
     }
 
     let mut group = c.benchmark_group(format!("TopK_Add_{}", num_adds));
-    group.sample_size(60); 
-    group.warm_up_time(std::time::Duration::from_secs(3)); 
-    group.measurement_time(std::time::Duration::from_secs(10)); 
+    group.sample_size(60);
+    group.warm_up_time(std::time::Duration::from_secs(3));
+    group.measurement_time(std::time::Duration::from_secs(10));
 
     group.bench_function("Add", |b| {
         b.iter(|| {
@@ -29,7 +29,8 @@ fn benchmark_topk_add(c: &mut Criterion, num_adds: usize) {
     group.finish();
 }
 
-criterion_group!(benches,
+criterion_group!(
+    benches,
     benchmark_topk_add_1,
     benchmark_topk_add_10,
     benchmark_topk_add_100,
@@ -67,4 +68,3 @@ fn benchmark_topk_add_100_000(c: &mut Criterion) {
 fn benchmark_topk_add_1_000_000(c: &mut Criterion) {
     benchmark_topk_add(c, 1_000_000);
 }
-

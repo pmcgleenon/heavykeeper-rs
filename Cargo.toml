@@ -1,6 +1,6 @@
 [package]
 name = "heavykeeper"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2021"
 authors = [ "Patrick McGleenon"]
 description = "HeavyKeeper is for finding Top-K elephant flows with high precision and low memory footprint."
@@ -30,11 +30,11 @@ thiserror = "2.0.11"
 debug = true
 
 [dev-dependencies]
-criterion = "0.7.0"
-mockall = "0.13"
+criterion = "0.8.2"
 clap = { version = "4.5.19", features = ["derive"] }
 memmap2 = "0.9.5"
 bincode = "1.3.3"
+rand_distr = "0.5"
 
 [[bench]]
 name = "topk_add"
@@ -42,3 +42,11 @@ harness = false
 
 [features]
 serde = ["ahash/serde", "serde/derive"]
+
+[[bench]]
+name = "topk_list"
+harness = false
+
+[[bench]]
+name = "topk_vs_bucketed"
+harness = false
