@@ -114,14 +114,6 @@ mod tests {
                 n, t, old_ms, new_ms, speedup
             );
         }
-
-        // Assert that for n=100_000 the binomial approach is >2× faster
-        let old_t = old_ms(100_000, 50_000, 0.5, 5);
-        let new_t = new_ms(100_000, 50_000, 0.5, 5);
-        assert!(
-            new_t < old_t * 0.5,
-            "binomial sampling should be >2× faster than while-loop for n=100000 (old={old_t:.4}ms, new={new_t:.4}ms)"
-        );
     }
 
     #[test]

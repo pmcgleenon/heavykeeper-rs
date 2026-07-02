@@ -1159,7 +1159,10 @@ mod tests {
         // width=1 forces both items into the same bucket, guaranteeing a decay
         // collision. The old while-loop would iterate up to increment times (~1e9)
         // and hang. The binomial fix must complete instantly.
-        let mut topk: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 1, 4, 0.9);
+        // depth=1 forces the second add into the same cell, guaranteeing a
+        // decay collision. With depth>1 the second item could land in an
+        // empty slot and skip decay_and_maybe_evict entirely.
+        let mut topk: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 1, 1, 0.9);
         topk.add(&b"alpha".to_vec(), 1_000_000);
         topk.add(&b"beta".to_vec(), 1_000_000_000);
         let nodes = topk.list();
