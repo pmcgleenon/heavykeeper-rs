@@ -1,8 +1,9 @@
 use crate::hash_composition::HashComposer;
 use crate::priority_queue::TopKQueue;
+use crate::binomial::sample_binomial;
 use ahash::RandomState;
 use rand::rngs::SmallRng;
-use rand::{RngCore, SeedableRng};
+use rand::SeedableRng;
 use std::borrow::Borrow;
 use std::clone::Clone;
 use std::fmt::Debug;
@@ -306,24 +307,18 @@ impl<T: Ord + Clone + Hash> TopK<T> {
                 bucket.count += increment;
                 max_count = std::cmp::max(max_count, bucket.count);
             } else {
-                let mut remaining_incr = increment;
-                while remaining_incr > 0 {
-                    let current_count = self.buckets[i][bucket_idx].count;
-                    let decay_threshold = self.decay_threshold(current_count);
-                    let rand = self.random.next_u64();
+                let cur = self.buckets[i][bucket_idx].count;
+                let p = self.decay_threshold(cur) as f64 / (u64::MAX as f64);
+                let decays = sample_binomial(increment, p, &mut self.random);
+
+                if decays >= cur {
                     let bucket = &mut self.buckets[i][bucket_idx];
-                    if rand < decay_threshold {
-                        bucket.count = bucket.count.saturating_sub(1);
-
-                        if bucket.count == 0 {
-                            bucket.fingerprint = composer.fingerprint();
-                            bucket.count = remaining_incr;
-                            max_count = std::cmp::max(max_count, bucket.count);
-                            break;
-                        }
-                    }
-
-                    remaining_incr -= 1;
+                    bucket.fingerprint = composer.fingerprint();
+                    bucket.count = increment;
+                    max_count = std::cmp::max(max_count, bucket.count);
+                } else if decays > 0 {
+                    self.buckets[i][bucket_idx].count =
+                        self.buckets[i][bucket_idx].count.saturating_sub(decays);
                 }
             }
         }
@@ -763,7 +758,6 @@ mod tests {
         assert_eq!(nodes[0].item, item, "Item should match");
     }
 
-    /// Tests adding a an item and overwriting it with another
     #[test]
     fn test_add_overwrite() {
         let k = 1;
@@ -789,7 +783,7 @@ mod tests {
 
         let nodes = topk.list();
         assert_eq!(nodes.len(), 1, "Should have exactly one item");
-        assert_eq!(nodes[0].count, 2001, "Invalid count");
+        assert_eq!(nodes[0].count, 3000, "Invalid count");
         assert_eq!(nodes[0].item, item2, "Item should match");
     }
 
@@ -1538,6 +1532,22 @@ mod tests {
         assert!(items.contains(&b"b".to_vec()));
         assert!(items.contains(&b"c".to_vec()));
         assert!(!items.contains(&b"a".to_vec()));
+    }
+
+    #[test]
+    fn test_decay_large_increment_does_not_hang() {
+        // width=1 forces "alpha" and "beta" into the same bucket, guaranteeing
+        // a decay collision. Without this, the while-loop version could avoid
+        // the decay path entirely and "pass" without testing the fix.
+        let mut topk: TopK<Vec<u8>> = TopK::new(10, 1, 5, 0.9);
+        let item1 = b"alpha".to_vec();
+        let item2 = b"beta".to_vec();
+
+        topk.add(&item1, 1_000_000);
+        topk.add(&item2, 1_000_000_000);
+
+        let nodes = topk.list();
+        assert!(nodes.len() <= 10);
     }
 
     #[test]
