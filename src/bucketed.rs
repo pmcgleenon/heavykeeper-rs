@@ -8,10 +8,11 @@ use std::hash::Hash;
 
 use ahash::RandomState;
 use rand::rngs::SmallRng;
-use rand::{RngCore, SeedableRng};
+use rand::SeedableRng;
 use thiserror::Error;
 
 use crate::priority_queue::TopKQueue;
+use crate::binomial::sample_binomial;
 
 const DECAY_LOOKUP_SIZE: usize = 1024;
 
@@ -457,22 +458,21 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
         increment: u64,
     ) -> Option<u64> {
         let cell_idx = bucket_start + min_idx;
-        let mut remaining = increment;
-        while remaining > 0 {
-            let current_count = self.cells[cell_idx].count;
-            let threshold = self.decay_threshold(current_count);
-            if self.rng.next_u64() < threshold {
-                let cell = &mut self.cells[cell_idx];
-                cell.count = cell.count.saturating_sub(1);
-                if cell.count == 0 {
-                    cell.fingerprint = fp;
-                    cell.count = remaining;
-                    return Some(remaining);
-                }
-            }
-            remaining -= 1;
+        let cur = self.cells[cell_idx].count;
+        let p = self.decay_threshold(cur) as f64 / (u64::MAX as f64);
+        let decays = sample_binomial(increment, p, &mut self.rng);
+
+        if decays >= cur {
+            let cell = &mut self.cells[cell_idx];
+            cell.fingerprint = fp;
+            cell.count = increment;
+            Some(increment)
+        } else if decays > 0 {
+            self.cells[cell_idx].count = self.cells[cell_idx].count.saturating_sub(decays);
+            None
+        } else {
+            None
         }
-        None
     }
 
     fn decay_threshold(&self, count: u64) -> u64 {
@@ -1152,6 +1152,21 @@ mod tests {
         assert!(items.contains(&b"b".to_vec()));
         assert!(items.contains(&b"c".to_vec()));
         assert!(!items.contains(&b"a".to_vec()));
+    }
+
+    #[test]
+    fn test_decay_large_increment_does_not_hang() {
+        // width=1 forces both items into the same bucket, guaranteeing a decay
+        // collision. The old while-loop would iterate up to increment times (~1e9)
+        // and hang. The binomial fix must complete instantly.
+        // depth=1 forces the second add into the same cell, guaranteeing a
+        // decay collision. With depth>1 the second item could land in an
+        // empty slot and skip decay_and_maybe_evict entirely.
+        let mut topk: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 1, 1, 0.9);
+        topk.add(&b"alpha".to_vec(), 1_000_000);
+        topk.add(&b"beta".to_vec(), 1_000_000_000);
+        let nodes = topk.list();
+        assert!(nodes.len() <= 10);
     }
 
     #[test]

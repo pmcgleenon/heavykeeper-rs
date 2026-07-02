@@ -13,10 +13,11 @@ use std::hash::Hash;
 
 use ahash::RandomState;
 use rand::rngs::SmallRng;
-use rand::{RngCore, SeedableRng};
+use rand::SeedableRng;
 use thiserror::Error;
 
 use crate::priority_queue::TopKQueue;
+use crate::binomial::sample_binomial;
 
 const DECAY_LOOKUP_SIZE: usize = 1024;
 
@@ -712,22 +713,21 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
         fingerprint: u64,
         increment: u64,
     ) -> Option<u64> {
-        let mut remaining = increment;
-        while remaining > 0 {
-            let current_count = self.lobbies[bucket].count;
-            let threshold = self.decay_threshold(current_count);
-            if self.rng.next_u64() < threshold {
-                let lobby = &mut self.lobbies[bucket];
-                lobby.count = lobby.count.saturating_sub(1);
-                if lobby.count == 0 {
-                    lobby.fingerprint = fingerprint;
-                    lobby.count = remaining;
-                    return Some(remaining);
-                }
-            }
-            remaining -= 1;
+        let cur = self.lobbies[bucket].count;
+        let p = self.decay_threshold(cur) as f64 / (u64::MAX as f64);
+        let decays = sample_binomial(increment, p, &mut self.rng);
+
+        if decays >= cur {
+            let lobby = &mut self.lobbies[bucket];
+            lobby.fingerprint = fingerprint;
+            lobby.count = increment;
+            Some(increment)
+        } else if decays > 0 {
+            self.lobbies[bucket].count = self.lobbies[bucket].count.saturating_sub(decays);
+            None
+        } else {
+            None
         }
-        None
     }
 
     fn decay_threshold(&self, count: u64) -> u64 {
@@ -1437,6 +1437,19 @@ mod tests {
 
         // An item never added at all is neither in the sketch nor top-k.
         assert!(!topk.contains_top_k(b"absent".as_slice()));
+    }
+
+    #[test]
+    fn test_decay_large_increment_does_not_hang() {
+        // depth=1 + pre-fill heavy slot: "hot" takes the only heavy slot,
+        // so "alpha" stays in the lobby. Then "beta" collides into the
+        // occupied lobby, guaranteeing decay_lobby_and_maybe_replace is hit.
+        let mut topk: CuckooTopK<Vec<u8>> = CuckooTopK::new(10, 1, 1, 0.9);
+        topk.add(&b"hot".to_vec(), 1_000_000_000);  // fills heavy slot
+        topk.add(&b"alpha".to_vec(), 1_000_000);    // stays in lobby
+        topk.add(&b"beta".to_vec(), 1_000_000_000);  // decays occupied lobby
+        let nodes = topk.list();
+        assert!(nodes.len() <= 10);
     }
 
     #[test]

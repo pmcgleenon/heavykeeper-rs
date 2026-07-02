@@ -13,5 +13,6 @@ pub use bucketed::{BucketedBuilderError, BucketedMergeError, BucketedNode, Bucke
 mod cuckoo;
 pub use cuckoo::{CuckooBuilderError, CuckooMergeError, CuckooNode, CuckooTopK};
 
+mod binomial;
 mod hash_composition;
 mod priority_queue;
