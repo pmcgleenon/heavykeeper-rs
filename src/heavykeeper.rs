@@ -1,8 +1,9 @@
+use crate::geometric::sample_geometric;
 use crate::hash_composition::HashComposer;
 use crate::priority_queue::TopKQueue;
 use ahash::RandomState;
 use rand::rngs::SmallRng;
-use rand::{RngCore, SeedableRng};
+use rand::SeedableRng;
 use std::borrow::Borrow;
 use std::clone::Clone;
 use std::fmt::Debug;
@@ -306,24 +307,40 @@ impl<T: Ord + Clone + Hash> TopK<T> {
                 bucket.count += increment;
                 max_count = std::cmp::max(max_count, bucket.count);
             } else {
+                // Per-unit decay, but skipping straight to each successful
+                // decay with a geometric sample instead of one RNG draw per
+                // unit of increment. Distribution-identical to the old
+                // while-loop (probability re-evaluated at every count level,
+                // takeover count = unconsumed remainder), but O(decays)
+                // instead of O(increment), so huge increments can't hang.
                 let mut remaining_incr = increment;
-                while remaining_incr > 0 {
+                loop {
                     let current_count = self.buckets[i][bucket_idx].count;
                     let decay_threshold = self.decay_threshold(current_count);
-                    let rand = self.random.next_u64();
-                    let bucket = &mut self.buckets[i][bucket_idx];
-                    if rand < decay_threshold {
-                        bucket.count = bucket.count.saturating_sub(1);
-
-                        if bucket.count == 0 {
-                            bucket.fingerprint = composer.fingerprint();
-                            bucket.count = remaining_incr;
-                            max_count = std::cmp::max(max_count, bucket.count);
-                            break;
-                        }
+                    if decay_threshold == 0 {
+                        break;
                     }
-
-                    remaining_incr -= 1;
+                    let trials = sample_geometric(decay_threshold, &mut self.random);
+                    if trials > remaining_incr {
+                        // The next decay lands beyond this add's budget: the
+                        // remaining units are all failed trials.
+                        break;
+                    }
+                    let bucket = &mut self.buckets[i][bucket_idx];
+                    if bucket.count <= 1 {
+                        // Killing decay: the old loop broke before spending a
+                        // unit on the successful trial, so only the trials-1
+                        // failures before it consume budget.
+                        bucket.fingerprint = composer.fingerprint();
+                        bucket.count = remaining_incr - (trials - 1);
+                        max_count = std::cmp::max(max_count, bucket.count);
+                        break;
+                    }
+                    bucket.count -= 1;
+                    remaining_incr -= trials;
+                    if remaining_incr == 0 {
+                        break;
+                    }
                 }
             }
         }

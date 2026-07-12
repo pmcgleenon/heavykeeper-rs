@@ -7,7 +7,7 @@
 //! drops, and when the count reaches zero the challenger takes the bucket
 //! with the *unconsumed remainder* of the increment.
 
-use heavykeeper::TopK;
+use heavykeeper::{BucketedTopK, CuckooTopK, TopK};
 
 /// With decay = 1.0 every trial decays, so the whole process is
 /// deterministic and batched vs. single-unit adds must agree exactly.
@@ -74,4 +74,34 @@ fn heavy_challenger_evicts_incumbent() {
         nodes[0].item, item2,
         "a 15M-weight challenger must evict a 120-count incumbent"
     );
+}
+
+/// The motivating bug for the batched decay path: a colliding add with a
+/// huge increment must not iterate once per unit. The incumbent's count
+/// is high enough (decay^1e6 ~= 0) that the challenger cannot win the
+/// bucket, so the entire add is failed decay trials — the worst case for
+/// a per-unit loop, which would run u64::MAX iterations here.
+#[test]
+fn huge_increment_add_does_not_hang_topk() {
+    let mut topk: TopK<Vec<u8>> = TopK::new(1, 1, 1, 0.9);
+    topk.add(&b"alpha".to_vec(), 1_000_000);
+    topk.add(&b"beta".to_vec(), u64::MAX);
+    assert_eq!(topk.list()[0].item, b"alpha".to_vec());
+}
+
+#[test]
+fn huge_increment_add_does_not_hang_bucketed() {
+    let mut topk: BucketedTopK<Vec<u8>> = BucketedTopK::new(10, 1, 1, 0.9);
+    topk.add(&b"alpha".to_vec(), 1_000_000);
+    topk.add(&b"beta".to_vec(), u64::MAX);
+    assert!(topk.list().len() <= 10);
+}
+
+#[test]
+fn huge_increment_add_does_not_hang_cuckoo() {
+    let mut topk: CuckooTopK<Vec<u8>> = CuckooTopK::new(10, 1, 1, 0.9);
+    topk.add(&b"hot".to_vec(), 1_000_000_000); // fills the heavy slot
+    topk.add(&b"alpha".to_vec(), 1_000_000); // stays in the lobby
+    topk.add(&b"beta".to_vec(), u64::MAX); // decays the occupied lobby
+    assert!(topk.list().len() <= 10);
 }
