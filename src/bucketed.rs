@@ -8,9 +8,10 @@ use std::hash::Hash;
 
 use ahash::RandomState;
 use rand::rngs::SmallRng;
-use rand::{RngCore, SeedableRng};
+use rand::SeedableRng;
 use thiserror::Error;
 
+use crate::geometric::sample_geometric;
 use crate::priority_queue::TopKQueue;
 
 const DECAY_LOOKUP_SIZE: usize = 1024;
@@ -457,22 +458,37 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
         increment: u64,
     ) -> Option<u64> {
         let cell_idx = bucket_start + min_idx;
+        // Per-unit decay, skipping straight to each successful decay with a
+        // geometric sample: distribution-identical to one RNG draw per unit
+        // of increment, but O(decays) so huge increments can't hang.
         let mut remaining = increment;
-        while remaining > 0 {
+        loop {
             let current_count = self.cells[cell_idx].count;
             let threshold = self.decay_threshold(current_count);
-            if self.rng.next_u64() < threshold {
-                let cell = &mut self.cells[cell_idx];
-                cell.count = cell.count.saturating_sub(1);
-                if cell.count == 0 {
-                    cell.fingerprint = fp;
-                    cell.count = remaining;
-                    return Some(remaining);
-                }
+            if threshold == 0 {
+                return None;
             }
-            remaining -= 1;
+            let trials = sample_geometric(threshold, &mut self.rng);
+            if trials > remaining {
+                // The next decay lands beyond this add's budget.
+                return None;
+            }
+            let cell = &mut self.cells[cell_idx];
+            if cell.count <= 1 {
+                // Killing decay: the old loop returned before spending a
+                // unit on the successful trial, so only the trials-1
+                // failures before it consume budget.
+                let new_count = remaining - (trials - 1);
+                cell.fingerprint = fp;
+                cell.count = new_count;
+                return Some(new_count);
+            }
+            cell.count -= 1;
+            remaining -= trials;
+            if remaining == 0 {
+                return None;
+            }
         }
-        None
     }
 
     fn decay_threshold(&self, count: u64) -> u64 {
