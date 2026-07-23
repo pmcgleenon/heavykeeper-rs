@@ -1,5 +1,6 @@
 use crate::hash_composition::HashComposer;
 use crate::priority_queue::TopKQueue;
+use crate::traits::{Counter, Fingerprint};
 use ahash::RandomState;
 use rand::rngs::SmallRng;
 use rand::{RngCore, SeedableRng};
@@ -12,9 +13,9 @@ use thiserror::Error;
 const DECAY_LOOKUP_SIZE: usize = 1024;
 
 #[derive(Default, Clone, Debug)]
-struct Bucket {
-    fingerprint: u64,
-    count: u64,
+struct Bucket<F: Fingerprint, C: Counter> {
+    fingerprint: F,
+    count: C,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -66,8 +67,28 @@ pub enum BuilderError {
     MissingField { field: String },
 }
 
+/// Top-K HeavyKeeper sketch with configurable fingerprint and counter widths.
+///
+/// Type parameters:
+/// - `T`: The item type stored in the top-K heap (e.g., `String`, `Vec<u8>`)
+/// - `F`: Fingerprint width (`u64`, `u32`, or `u16`). Default: `u64`
+/// - `C`: Counter width (`u64`, `u32`, or `u16`). Default: `u64`
+///
+/// # Memory per cell
+/// - `TopK<T>` (default): 16 bytes/cell (`u64` + `u64`)
+/// - `TopK<T, u32, u32>`: 8 bytes/cell
+/// - `TopK<T, u16, u16>`: 4 bytes/cell
+///
+/// # Example
+/// ```
+/// use heavykeeper::TopK;
+///
+/// // 4× less memory than default, same algorithm
+/// let mut topk: TopK<String, u32, u32> = TopK::new(10, 8192, 2, 0.95);
+/// topk.add("hello", 1);
+/// ```
 #[derive(Clone)]
-pub struct TopK<T: Ord + Clone + Hash> {
+pub struct TopK<T: Ord + Clone + Hash, F: Fingerprint = u64, C: Counter = u64> {
     top_items: usize,
     width: usize,
     /// Non-zero when `width` is a power of two and `> 1`; the bucket
@@ -76,20 +97,20 @@ pub struct TopK<T: Ord + Clone + Hash> {
     depth: usize,
     decay: f64,
     decay_thresholds: Vec<u64>,
-    buckets: Vec<Vec<Bucket>>,
+    buckets: Vec<Vec<Bucket<F, C>>>,
     priority_queue: TopKQueue<T>,
     hasher: RandomState,
     random: SmallRng,
 }
 
-pub struct Builder<T> {
+pub struct Builder<T, F: Fingerprint = u64, C: Counter = u64> {
     k: Option<usize>,
     width: Option<usize>,
     depth: Option<usize>,
     decay: Option<f64>,
     seed: Option<u64>,
     hasher: Option<RandomState>,
-    _phantom: std::marker::PhantomData<T>,
+    _phantom: std::marker::PhantomData<(T, F, C)>,
 }
 
 fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Vec<u64> {
@@ -103,8 +124,8 @@ fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Vec<u64> {
     thresholds
 }
 
-impl<T: Ord + Clone + Hash> TopK<T> {
-    pub fn builder() -> Builder<T> {
+impl<T: Ord + Clone + Hash, F: Fingerprint, C: Counter> TopK<T, F, C> {
+    pub fn builder() -> Builder<T, F, C> {
         Builder::new()
     }
 
@@ -143,8 +164,8 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         for _ in 0..depth {
             buckets.push(vec![
                 Bucket {
-                    fingerprint: 0,
-                    count: 0
+                    fingerprint: F::default(),
+                    count: C::ZERO,
                 };
                 width
             ]);
@@ -184,18 +205,20 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         }
 
         let mut composer = HashComposer::new(&self.hasher, item);
-        let mut min_count = u64::MAX;
+        let fp = F::from_hash(composer.fingerprint());
+        let mut found = false;
 
         for i in 0..self.depth {
             let bucket_idx = composer.next_bucket(self.width as u64, self.width_mask, i);
             let bucket = &self.buckets[i][bucket_idx];
 
-            if bucket.fingerprint == composer.fingerprint() {
-                min_count = min_count.min(bucket.count);
+            if bucket.fingerprint == fp {
+                found = true;
+                break;
             }
         }
 
-        min_count != u64::MAX
+        found
     }
 
     /// Deprecated alias for [`contains`](Self::contains).
@@ -227,14 +250,15 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         }
 
         let mut composer = HashComposer::new(&self.hasher, item);
+        let fp = F::from_hash(composer.fingerprint());
         let mut min_count = u64::MAX;
 
         for i in 0..self.depth {
             let bucket_idx = composer.next_bucket(self.width as u64, self.width_mask, i);
             let bucket = &self.buckets[i][bucket_idx];
 
-            if bucket.fingerprint == composer.fingerprint() {
-                min_count = min_count.min(bucket.count);
+            if bucket.fingerprint == fp {
+                min_count = min_count.min(bucket.count.as_u64());
             }
         }
 
@@ -252,14 +276,15 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
     {
         let mut composer = HashComposer::new(&self.hasher, item);
+        let fp = F::from_hash(composer.fingerprint());
         let mut min_count = u64::MAX;
 
         for i in 0..self.depth {
             let bucket_idx = composer.next_bucket(self.width as u64, self.width_mask, i);
             let bucket = &self.buckets[i][bucket_idx];
 
-            if bucket.fingerprint == composer.fingerprint() {
-                min_count = min_count.min(bucket.count);
+            if bucket.fingerprint == fp {
+                min_count = min_count.min(bucket.count.as_u64());
             }
         }
 
@@ -287,6 +312,8 @@ impl<T: Ord + Clone + Hash> TopK<T> {
             return (None, false);
         }
         let mut composer = HashComposer::new(&self.hasher, item);
+        let fp = F::from_hash(composer.fingerprint());
+        let incr = C::from_u64(increment);
         let mut max_count: u64 = 0;
 
         for i in 0..self.depth {
@@ -294,31 +321,29 @@ impl<T: Ord + Clone + Hash> TopK<T> {
 
             let (matches, empty) = {
                 let bucket = &self.buckets[i][bucket_idx];
-                (
-                    bucket.fingerprint == composer.fingerprint(),
-                    bucket.count == 0u64,
-                )
+                (bucket.fingerprint == fp, bucket.count.is_zero())
             };
 
             if matches || empty {
                 let bucket = &mut self.buckets[i][bucket_idx];
-                bucket.fingerprint = composer.fingerprint();
-                bucket.count += increment;
-                max_count = std::cmp::max(max_count, bucket.count);
+                bucket.fingerprint = fp;
+                bucket.count = bucket.count.saturating_add(incr);
+                max_count = std::cmp::max(max_count, bucket.count.as_u64());
             } else {
                 let mut remaining_incr = increment;
                 while remaining_incr > 0 {
-                    let current_count = self.buckets[i][bucket_idx].count;
+                    let current_count = self.buckets[i][bucket_idx].count.as_u64();
                     let decay_threshold = self.decay_threshold(current_count);
                     let rand = self.random.next_u64();
                     let bucket = &mut self.buckets[i][bucket_idx];
                     if rand < decay_threshold {
-                        bucket.count = bucket.count.saturating_sub(1);
+                        bucket.count = bucket.count.dec();
 
-                        if bucket.count == 0 {
-                            bucket.fingerprint = composer.fingerprint();
-                            bucket.count = remaining_incr;
-                            max_count = std::cmp::max(max_count, bucket.count);
+                        if bucket.count.is_zero() {
+                            bucket.fingerprint = fp;
+                            bucket.count = C::from_u64(remaining_incr);
+                            max_count =
+                                std::cmp::max(max_count, bucket.count.as_u64());
                             break;
                         }
                     }
@@ -385,16 +410,16 @@ impl<T: Ord + Clone + Hash> TopK<T> {
     /// each tracked item owns beyond `size_of::<T>()`. `item_heap(t)` returns
     /// the bytes `t` points to (e.g. `String::capacity`); pass `|_| 0`
     /// for a `T` that owns no heap.
-    pub fn mem_bytes<F>(&self, item_heap: F) -> usize
+    pub fn mem_bytes<G>(&self, item_heap: G) -> usize
     where
-        F: Fn(&T) -> usize,
+        G: Fn(&T) -> usize,
     {
         use std::mem::size_of;
-        let outer = self.buckets.capacity() * size_of::<Vec<Bucket>>();
+        let outer = self.buckets.capacity() * size_of::<Vec<Bucket<F, C>>>();
         let rows: usize = self
             .buckets
             .iter()
-            .map(|row| row.capacity() * size_of::<Bucket>())
+            .map(|row| row.capacity() * size_of::<Bucket<F, C>>())
             .sum();
         outer
             + rows
@@ -438,8 +463,8 @@ impl<T: Ord + Clone + Hash> TopK<T> {
             for (self_bucket, other_bucket) in self_row.iter_mut().zip(other_row.iter()) {
                 if self_bucket.fingerprint == other_bucket.fingerprint {
                     // Same item, add counts
-                    self_bucket.count += other_bucket.count;
-                } else if self_bucket.count == 0 {
+                    self_bucket.count = self_bucket.count.saturating_add(other_bucket.count);
+                } else if self_bucket.count.is_zero() {
                     // Empty bucket in self, copy from other
                     *self_bucket = other_bucket.clone();
                 }
@@ -457,13 +482,13 @@ impl<T: Ord + Clone + Hash> TopK<T> {
     }
 }
 
-impl<T: Ord + Clone + Hash + Debug> TopK<T> {
+impl<T: Ord + Clone + Hash + Debug, F: Fingerprint, C: Counter> TopK<T, F, C> {
     pub fn debug(&self) {
         println!("width: {}", self.width);
         println!("depth: {}", self.depth);
         println!("decay: {}", self.decay);
         println!("decay thresholds: {:?}", self.decay_thresholds);
-        let mut buckets: Vec<(&Bucket, usize, usize)> = self
+        let mut buckets: Vec<(&Bucket<F, C>, usize, usize)> = self
             .buckets
             .iter()
             .enumerate()
@@ -472,7 +497,7 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
                     .enumerate()
                     .map(move |(j, bucket)| (bucket, i, j))
             })
-            .filter(|(bucket, _, _)| bucket.count != 0)
+            .filter(|(bucket, _, _)| !bucket.count.is_zero())
             .collect();
         buckets.sort_by(|a, b| b.0.count.cmp(&a.0.count));
         for (bucket, i, j) in buckets {
@@ -500,13 +525,13 @@ impl<T: Ord + Clone + Hash + Debug> TopK<T> {
     }
 }
 
-impl<T: Ord + Clone + Hash> Default for Builder<T> {
+impl<T: Ord + Clone + Hash, F: Fingerprint, C: Counter> Default for Builder<T, F, C> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Ord + Clone + Hash> Builder<T> {
+impl<T: Ord + Clone + Hash, F: Fingerprint, C: Counter> Builder<T, F, C> {
     pub fn new() -> Self {
         Self {
             k: None,
@@ -549,7 +574,7 @@ impl<T: Ord + Clone + Hash> Builder<T> {
         self
     }
 
-    pub fn build(self) -> Result<TopK<T>, BuilderError> {
+    pub fn build(self) -> Result<TopK<T, F, C>, BuilderError> {
         let k = self.k.ok_or_else(|| BuilderError::MissingField {
             field: "k".to_string(),
         })?;
@@ -584,7 +609,7 @@ mod tests {
     #[test]
     fn test_mem_bytes_covers_rows_and_decay_table() {
         let topk: TopK<Vec<u8>> = TopK::new(10, 100, 5, 0.9);
-        let rows = 100 * 5 * std::mem::size_of::<Bucket>();
+        let rows = 100 * 5 * std::mem::size_of::<Bucket<u64, u64>>();
         let decay = DECAY_LOOKUP_SIZE * std::mem::size_of::<u64>();
         // The per-row Bucket allocations and decay table are accounted for;
         // the outer Vec and priority queue add more on top.
@@ -644,6 +669,7 @@ mod tests {
         let mut topk: TopK<Vec<u8>> = TopK::new(10, 100, 5, 0.9);
         let present = b"hello".to_vec();
         let absent = b"world".to_vec();
+
         topk.add(&present, 1);
         assert_eq!(topk.query(&present), topk.contains(&present));
         assert_eq!(topk.query(&absent), topk.contains(&absent));
@@ -656,8 +682,8 @@ mod tests {
         let width = 100;
         let depth = 5;
         let decay = 0.9;
-        let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
 
+        let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
         let item1 = b"lashin".to_vec();
         let item2 = b"ballynamoney".to_vec();
         let item3 = "पुष्पं अस्ति।".as_bytes().to_vec();
@@ -752,8 +778,8 @@ mod tests {
         let width = 100;
         let depth = 5;
         let decay = 0.9;
-        let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
 
+        let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
         let item = b"hello".to_vec();
         topk.add(&item, 1);
 
@@ -763,13 +789,14 @@ mod tests {
         assert_eq!(nodes[0].item, item, "Item should match");
     }
 
-    /// Tests adding a an item and overwriting it with another
+    /// Tests adding an item and overwriting it with another
     #[test]
     fn test_add_overwrite() {
         let k = 1;
         let width = 1;
         let depth = 1;
         let decay = 1.0;
+
         let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
 
         // override the decay thresholds so we always decay
@@ -802,7 +829,6 @@ mod tests {
         let decay = 0.9;
 
         let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
-
         let item1 = b"hello".to_vec();
         let item2 = b"world".to_vec();
 
@@ -837,14 +863,12 @@ mod tests {
         let decay = 0.9;
 
         let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
-
         let items = [
             b"hello".to_vec(),
             b"world".to_vec(),
             b"ballynamoney".to_vec(),
             b"lane".to_vec(),
         ];
-
         for item in &items {
             topk.add(item, 1);
         }
@@ -865,7 +889,6 @@ mod tests {
         let decay = 0.5; // Lower decay value for faster count reduction
 
         let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
-
         let items = [
             b"hello".to_vec(),
             b"world".to_vec(),
@@ -873,7 +896,6 @@ mod tests {
             b"lane".to_vec(),
             b"pear tree".to_vec(),
         ];
-
         for item in &items {
             topk.add(item, 1);
         }
@@ -972,13 +994,11 @@ mod tests {
         let decay = 0.9;
 
         let mut topk: TopK<Vec<u8>> = TopK::new(k, width, depth, decay);
-
         let item = b"test_item".to_vec();
         let num_additions = 1000;
 
         // Add the same item many times
         topk.add(&item, num_additions);
-
         assert_eq!(
             topk.count(&item),
             num_additions,
@@ -1039,7 +1059,7 @@ mod tests {
         assert!(
             topk.buckets.iter().any(|row| row
                 .iter()
-                .any(|bucket| bucket.fingerprint == item_hash && bucket.count == 1)),
+                .any(|bucket| bucket.fingerprint == item_hash && bucket.count.as_u64() == 1)),
             "Item should be inserted into an empty bucket with count 1"
         );
 
@@ -1161,8 +1181,8 @@ mod tests {
     #[test]
     fn test_merge_basic() {
         let seed = 12345;
-        let mut hk1 = TopK::with_seed(3, 100, 5, 0.9, seed);
-        let mut hk2 = TopK::with_seed(3, 100, 5, 0.9, seed);
+        let mut hk1: TopK<Vec<u8>> = TopK::with_seed(3, 100, 5, 0.9, seed);
+        let mut hk2: TopK<Vec<u8>> = TopK::with_seed(3, 100, 5, 0.9, seed);
 
         let items = [b"item1".to_vec(), b"item2".to_vec(), b"item3".to_vec()];
 
@@ -1225,8 +1245,8 @@ mod tests {
     #[test]
     fn test_merge_with_overlapping_items() {
         let seed = 12345;
-        let mut hk1 = TopK::with_seed(3, 100, 5, 0.9, seed);
-        let mut hk2 = TopK::with_seed(3, 100, 5, 0.9, seed);
+        let mut hk1: TopK<Vec<u8>> = TopK::with_seed(3, 100, 5, 0.9, seed);
+        let mut hk2: TopK<Vec<u8>> = TopK::with_seed(3, 100, 5, 0.9, seed);
 
         let items = [b"common".to_vec(), b"unique1".to_vec(), b"unique2".to_vec()];
 
@@ -1244,16 +1264,8 @@ mod tests {
             10,
             "Common item count should be doubled"
         );
-        assert_eq!(
-            hk1.count(&items[1]),
-            1,
-            "Unique item count should be preserved"
-        );
-        assert_eq!(
-            hk1.count(&items[2]),
-            1,
-            "Unique item count should be preserved"
-        );
+        assert_eq!(hk1.count(&items[1]), 1, "Unique item count should be preserved");
+        assert_eq!(hk1.count(&items[2]), 1, "Unique item count should be preserved");
     }
 
     #[test]
@@ -1559,5 +1571,108 @@ mod tests {
         topk.add_with_evicted(&b"hot".to_vec(), 50);
         topk.add_with_evicted(&b"warm".to_vec(), 30);
         assert_eq!(topk.add_with_evicted(&b"cold".to_vec(), 10), (None, false));
+    }
+
+    // --- Tests for generic Fingerprint/Counter types ---
+
+    /// Verify that compact types actually use less memory per cell.
+    #[test]
+    fn test_compact_types_save_memory() {
+        let full: TopK<Vec<u8>, u64, u64> = TopK::new(10, 1000, 4, 0.9);
+        let half: TopK<Vec<u8>, u32, u32> = TopK::new(10, 1000, 4, 0.9);
+        let quarter: TopK<Vec<u8>, u16, u16> = TopK::new(10, 1000, 4, 0.9);
+
+        let full_bytes = full.mem_bytes(|_| 0);
+        let half_bytes = half.mem_bytes(|_| 0);
+        let quarter_bytes = quarter.mem_bytes(|_| 0);
+
+        assert!(
+            half_bytes < full_bytes,
+            "u32/u32 ({half_bytes}) should use less memory than u64/u64 ({full_bytes})"
+        );
+        assert!(
+            quarter_bytes < half_bytes,
+            "u16/u16 ({quarter_bytes}) should use less memory than u32/u32 ({half_bytes})"
+        );
+
+        assert!(full_bytes - half_bytes >= 32_000);
+        assert!(half_bytes - quarter_bytes >= 16_000);
+    }
+
+    /// Tests that compact u32 types produce same results as u64
+    #[test]
+    fn test_compact_u32_same_results() {
+        let mut topk_full: TopK<Vec<u8>, u64, u64> = TopK::new(10, 100, 5, 0.9);
+        let mut topk_compact: TopK<Vec<u8>, u32, u32> = TopK::new(10, 100, 5, 0.9);
+
+        let items: Vec<Vec<u8>> = (0..20)
+            .map(|i| format!("item_{}", i).into_bytes())
+            .collect();
+
+        for (i, item) in items.iter().enumerate() {
+            let count = (i as u64 + 1) * 10;
+            topk_full.add(item, count);
+            topk_compact.add(item, count);
+        }
+
+        let full_list = topk_full.list();
+        let compact_list = topk_compact.list();
+
+        assert_eq!(full_list.len(), compact_list.len());
+        for (f, c) in full_list.iter().zip(compact_list.iter()) {
+            assert_eq!(f.item, c.item, "Items should match");
+            assert_eq!(f.count, c.count, "Counts should match");
+        }
+    }
+
+    /// Tests that compact u16 types work correctly (with saturation)
+    #[test]
+    fn test_compact_u16_saturates_gracefully() {
+        let mut topk: TopK<Vec<u8>, u16, u16> = TopK::new(5, 100, 4, 0.9);
+
+        let item = b"overflow_test".to_vec();
+        topk.add(&item, 70_000);
+
+        let count = topk.count(&item);
+        assert_eq!(count, 65535, "Count should saturate at u16::MAX");
+    }
+
+    /// Tests merge with compact types
+    #[test]
+    fn test_merge_compact() {
+        let mut hk1: TopK<Vec<u8>, u32, u32> = TopK::new(10, 100, 5, 0.9);
+        let mut hk2: TopK<Vec<u8>, u32, u32> = TopK::new(10, 100, 5, 0.9);
+
+        let item = b"compact_merge".to_vec();
+        hk1.add(&item, 10);
+        hk2.add(&item, 20);
+
+        hk1.merge(&hk2).unwrap();
+        assert_eq!(hk1.count(&item), 30);
+    }
+
+    /// Tests builder pattern with compact types
+    #[test]
+    fn test_builder_compact() {
+        let mut topk: TopK<String, u32, u16> = TopK::builder()
+            .k(5)
+            .width(256)
+            .depth(3)
+            .decay(0.9)
+            .seed(42)
+            .build()
+            .unwrap();
+
+        topk.add("hello", 100);
+        assert_eq!(topk.count("hello"), 100);
+    }
+
+    /// Regression: decay threshold computation at boundary
+    #[test]
+    fn test_decay_threshold_boundary() {
+        let topk: TopK<Vec<u8>> = TopK::new(10, 100, 5, 0.9);
+        let _thr = topk.decay_threshold_for_test(DECAY_LOOKUP_SIZE as u64);
+        let thr_large = topk.decay_threshold_for_test(1_000_000);
+        assert!(thr_large < u64::MAX / 2, "Large counts should have low decay probability");
     }
 }
