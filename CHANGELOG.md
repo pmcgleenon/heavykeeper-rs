@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.7.0...v0.7.1) - 2026-08-31
+
+### Added
+
+- reject wrong seed on load via hasher probe in header
+- add magic bytes and variant tag to serialization header
+- add byte serialization for BucketedTopK
+- add byte serialization for TopK
+- *(cuckoo)* persist RNG state across serialization
+
+### Fixed
+
+- address PR comments
+- *(cuckoo)* preserve priority-queue tie order across serialization
+- *(cuckoo)* restore priority-queue capacity on deserialize
+
+### Other
+
+- Merge pull request #88 from pmcgleenon/dependabot/github_actions/actions/checkout-7
+- Merge pull request #96 from pmcgleenon/perf/pq-redundant-lookup
+- harden the serialization format contract
+- switch RNG to fastrand and document hasher portability
+- share Cell and parse_cells
+- move error-path checks to shared ByteReader unit tests
+- extract shared read_params from from_bytes
+- replace positional byte reads with a ByteReader cursor
+- extract shared serialization module
+- move rand to dev-dependencies and drop small_rng feature
+- Use serializable Xoshiro256PlusPlus RNG for TopK and BucketedTopK
+- Merge remote-tracking branch 'origin/main' into rdb
+
 ## [0.7.0](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.6.9...v0.7.0) - 2026-06-29
 
 ### Added
