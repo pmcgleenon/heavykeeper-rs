@@ -3,6 +3,8 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::hash::Hash;
 
+use crate::defrag::{realloc_vec, Reallocator};
+
 /// A specialized priority queue for HeavyKeeper that maintains top-k items by count
 #[derive(Clone)]
 pub(crate) struct TopKQueue<T> {
@@ -83,6 +85,19 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
             + 2 * item_bytes
     }
 
+    /// Relocate the `heap`, `free_slots`, and `item_store` vectors through
+    /// `reallocator`. For `item_store` only the outer buffer moves; any heap a
+    /// `T` owns (e.g. a `Vec<u8>` key's bytes) stays put, as elements are
+    /// copied byte-for-byte. The `items` map is not relocated.
+    pub(crate) fn realloc_large_heap_allocated_objects<R: Reallocator>(
+        &mut self,
+        reallocator: &mut R,
+    ) {
+        realloc_vec(&mut self.heap, reallocator);
+        realloc_vec(&mut self.free_slots, reallocator);
+        realloc_vec(&mut self.item_store, reallocator);
+    }
+
     pub(crate) fn get<Q>(&self, item: &Q) -> Option<u64>
     where
         T: Borrow<Q>,
@@ -156,6 +171,16 @@ impl<T: Ord + Clone + Hash + PartialEq> TopKQueue<T> {
 
         // For new items, if we have space just add it
         if self.len() < self.capacity {
+            // Restore capacity to k after a defrag trimmed it, so it stays a
+            // known constant for memory tracking.
+            if self.heap.capacity() < self.capacity + 1 {
+                self.heap.reserve_exact(self.capacity + 1 - self.heap.len());
+            }
+            if self.item_store.capacity() < self.capacity {
+                self.item_store
+                    .reserve_exact(self.capacity - self.item_store.len());
+            }
+
             let pos = self.heap.len();
             self.sequence += 1;
 
