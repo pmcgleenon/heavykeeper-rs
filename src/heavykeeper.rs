@@ -11,6 +11,11 @@ use thiserror::Error;
 
 const DECAY_LOOKUP_SIZE: usize = 1024;
 
+/// Fixed probe hashed with each side's hasher in [`TopK::merge`] to detect a
+/// mismatched hasher before merging buckets. Shared verbatim with
+/// `BucketedTopK`/`CuckooTopK`'s own probe.
+const MERGE_HASHER_PROBE: &[u8] = b"heavykeeper-merge-compat-probe";
+
 /// Variant tag for `TopK` in the serialized header.
 const VARIANT: u8 = 0;
 
@@ -61,6 +66,9 @@ pub enum HeavyKeeperError {
         self_items: usize,
         other_items: usize,
     },
+
+    #[error("Incompatible hasher: self and other were built with different hashers")]
+    IncompatibleHasher,
 }
 
 #[derive(Error, Debug)]
@@ -414,6 +422,10 @@ where
 
     // Merge another HeavyKeeper into this one
     pub fn merge(&mut self, other: &Self) -> Result<(), HeavyKeeperError> {
+        if self.hasher.hash_one(MERGE_HASHER_PROBE) != other.hasher.hash_one(MERGE_HASHER_PROBE) {
+            return Err(HeavyKeeperError::IncompatibleHasher);
+        }
+
         // Verify compatible parameters
         if self.width != other.width {
             return Err(HeavyKeeperError::IncompatibleWidth {
@@ -1426,6 +1438,19 @@ mod tests {
         );
         assert_eq!(hk1.count(&items[1]), 3, "Count should be preserved");
         assert_eq!(hk1.count(&items[2]), 6, "Count should be preserved");
+    }
+
+    /// Tests merge with incompatible hasher (mirrors the equivalent test in
+    /// `bucketed.rs`/`cuckoo.rs`)
+    #[test]
+    fn test_merge_incompatible_hasher_different_seed() {
+        let mut hk1: TopK<Vec<u8>> = TopK::with_seed(3, 100, 5, 0.9, 1);
+        let hk2: TopK<Vec<u8>> = TopK::with_seed(3, 100, 5, 0.9, 2);
+
+        match hk1.merge(&hk2) {
+            Err(HeavyKeeperError::IncompatibleHasher) => {}
+            other => panic!("expected IncompatibleHasher, got {:?}", other),
+        }
     }
 
     /// Tests merge with incompatible width
