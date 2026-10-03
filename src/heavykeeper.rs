@@ -6,7 +6,7 @@ use fastrand::Rng;
 use std::borrow::Borrow;
 use std::clone::Clone;
 use std::fmt::Debug;
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash};
 use thiserror::Error;
 
 const DECAY_LOOKUP_SIZE: usize = 1024;
@@ -67,13 +67,20 @@ pub enum HeavyKeeperError {
 pub enum BuilderError {
     #[error("Missing required field: {field}")]
     MissingField { field: String },
+
+    #[error("Missing required field: hasher")]
+    MissingHasher,
 }
 
 /// See [`DeserializeError`].
 pub type TopKDeserializeError = DeserializeError;
 
 #[derive(Clone)]
-pub struct TopK<T: Ord + Clone + Hash> {
+pub struct TopK<T, S = RandomState>
+where
+    T: Ord + Clone + Hash,
+    S: BuildHasher + Clone,
+{
     top_items: usize,
     width: usize,
     /// Non-zero when `width` is a power of two and `> 1`; the bucket
@@ -83,18 +90,18 @@ pub struct TopK<T: Ord + Clone + Hash> {
     decay: f64,
     decay_thresholds: Vec<u64>,
     buckets: Vec<Vec<Bucket>>,
-    priority_queue: TopKQueue<T>,
-    hasher: RandomState,
+    priority_queue: TopKQueue<T, S>,
+    hasher: S,
     random: Rng,
 }
 
-pub struct Builder<T> {
+pub struct Builder<T, S = RandomState> {
     k: Option<usize>,
     width: Option<usize>,
     depth: Option<usize>,
     decay: Option<f64>,
     seed: Option<u64>,
-    hasher: Option<RandomState>,
+    hasher: Option<S>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -123,31 +130,19 @@ impl<T: Ord + Clone + Hash> TopK<T> {
     // New constructor that takes a seed
     pub fn with_seed(k: usize, width: usize, depth: usize, decay: f64, seed: u64) -> Self {
         let hasher = RandomState::with_seeds(seed, seed, seed, seed);
-        Self::with_components(
-            k,
-            width,
-            depth,
-            decay,
-            hasher,
-            Rng::with_seed(seed),
-        )
+        Self::with_components(k, width, depth, decay, hasher, Rng::with_seed(seed))
     }
+}
 
-    pub fn with_hasher(
-        k: usize,
-        width: usize,
-        depth: usize,
-        decay: f64,
-        hasher: RandomState,
-    ) -> Self {
-        Self::with_components(
-            k,
-            width,
-            depth,
-            decay,
-            hasher,
-            Rng::with_seed(0),
-        )
+impl<T, S> TopK<T, S>
+where
+    T: Ord + Clone + Hash,
+    S: BuildHasher + Clone,
+{
+    /// Creates a sketch using `hasher` for both bucket placement and the
+    /// internal top-k queue.
+    pub fn with_hasher(k: usize, width: usize, depth: usize, decay: f64, hasher: S) -> Self {
+        Self::with_components(k, width, depth, decay, hasher, Rng::with_seed(0))
     }
 
     fn with_components(
@@ -155,7 +150,7 @@ impl<T: Ord + Clone + Hash> TopK<T> {
         width: usize,
         depth: usize,
         decay: f64,
-        hasher: RandomState,
+        hasher: S,
         rng: Rng,
     ) -> Self {
         // Pre-allocate with capacity to avoid resizing
@@ -487,7 +482,10 @@ fn parse_buckets(slice: &[u8], width: usize) -> Vec<Vec<Bucket>> {
         .collect()
 }
 
-impl TopK<Vec<u8>> {
+impl<S> TopK<Vec<u8>, S>
+where
+    S: BuildHasher + Clone,
+{
     /// Serialize the sketch to a byte stream. Layout (little-endian):
     ///
     /// ```text
@@ -502,10 +500,10 @@ impl TopK<Vec<u8>> {
     /// rng_state: 8 bytes  (fastrand seed)
     /// ```
     ///
-    /// The seed is not stored; the hasher is rebuilt from the seed passed to
-    /// [`from_bytes`](TopK::from_bytes). A `hasher_probe` guards against a wrong
-    /// seed: it is the hash of a fixed value, re-checked on load. The RNG
-    /// position is stored (`rng_state`) and restored exactly.
+    /// The hasher is not stored. A `hasher_probe` guards against restoring with
+    /// a different hasher through
+    /// [`from_bytes_with_hasher`](TopK::from_bytes_with_hasher). The RNG position
+    /// is stored (`rng_state`) and restored exactly.
     pub fn to_bytes(&self) -> Vec<u8> {
         let cell_count = self.depth * self.width;
         let pq_len = self.priority_queue.len();
@@ -540,11 +538,11 @@ impl TopK<Vec<u8>> {
         out
     }
 
-    /// Reconstruct a sketch from [`to_bytes`](TopK::to_bytes) output.
-    /// `seed` must match the sketch's original seed; the hasher rebuilt from it.
-    pub fn from_bytes(bytes: &[u8], seed: u64) -> Result<Self, TopKDeserializeError> {
+    /// Reconstructs a sketch from [`to_bytes`](TopK::to_bytes) output using the
+    /// same hasher configuration as the original sketch.
+    pub fn from_bytes_with_hasher(bytes: &[u8], hasher: S) -> Result<Self, TopKDeserializeError> {
         let mut reader = ByteReader::new(bytes);
-        let probe = RandomState::with_seeds(seed, seed, seed, seed).hash_one(SERIALIZE_HASHER_PROBE);
+        let probe = hasher.hash_one(SERIALIZE_HASHER_PROBE);
         reader.read_header(VARIANT, probe)?;
 
         let (width, depth, decay, top_items) = reader.read_params()?;
@@ -577,7 +575,7 @@ impl TopK<Vec<u8>> {
 
         // The `top_items` reserve is an unbounded-header OOM tradeoff; see
         // `CuckooTopK::from_bytes`.
-        let mut sketch = Self::with_seed(top_items, width, depth, decay, seed);
+        let mut sketch = Self::with_hasher(top_items, width, depth, decay, hasher);
         sketch.buckets = buckets;
 
         for _ in 0..pq_len {
@@ -594,7 +592,23 @@ impl TopK<Vec<u8>> {
     }
 }
 
-impl<T: Ord + Clone + Hash + Debug> TopK<T> {
+impl TopK<Vec<u8>> {
+    /// Reconstructs a sketch from [`TopK::to_bytes`] output.
+    ///
+    /// `seed` must match the sketch's original seed; the default aHash state is
+    /// rebuilt from it. For another hasher, use
+    /// [`TopK::from_bytes_with_hasher`].
+    pub fn from_bytes(bytes: &[u8], seed: u64) -> Result<Self, TopKDeserializeError> {
+        let hasher = RandomState::with_seeds(seed, seed, seed, seed);
+        Self::from_bytes_with_hasher(bytes, hasher)
+    }
+}
+
+impl<T, S> TopK<T, S>
+where
+    T: Ord + Clone + Hash + Debug,
+    S: BuildHasher + Clone,
+{
     pub fn debug(&self) {
         println!("width: {}", self.width);
         println!("depth: {}", self.depth);
@@ -656,36 +670,6 @@ impl<T: Ord + Clone + Hash> Builder<T> {
         }
     }
 
-    pub fn k(mut self, k: usize) -> Self {
-        self.k = Some(k);
-        self
-    }
-
-    pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width);
-        self
-    }
-
-    pub fn depth(mut self, depth: usize) -> Self {
-        self.depth = Some(depth);
-        self
-    }
-
-    pub fn decay(mut self, decay: f64) -> Self {
-        self.decay = Some(decay);
-        self
-    }
-
-    pub fn seed(mut self, seed: u64) -> Self {
-        self.seed = Some(seed);
-        self
-    }
-
-    pub fn hasher(mut self, hasher: RandomState) -> Self {
-        self.hasher = Some(hasher);
-        self
-    }
-
     pub fn build(self) -> Result<TopK<T>, BuilderError> {
         let k = self.k.ok_or_else(|| BuilderError::MissingField {
             field: "k".to_string(),
@@ -714,9 +698,131 @@ impl<T: Ord + Clone + Hash> Builder<T> {
     }
 }
 
+impl<T, S> Builder<T, S>
+where
+    T: Ord + Clone + Hash,
+{
+    pub fn k(mut self, k: usize) -> Self {
+        self.k = Some(k);
+        self
+    }
+
+    pub fn width(mut self, width: usize) -> Self {
+        self.width = Some(width);
+        self
+    }
+
+    pub fn depth(mut self, depth: usize) -> Self {
+        self.depth = Some(depth);
+        self
+    }
+
+    pub fn decay(mut self, decay: f64) -> Self {
+        self.decay = Some(decay);
+        self
+    }
+
+    /// Seeds the sketch's decay RNG. For the default aHash builder this also
+    /// seeds the hasher when no explicit hasher was supplied.
+    pub fn seed(mut self, seed: u64) -> Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    /// Selects a hasher and changes the builder's output type accordingly.
+    pub fn hasher<H>(self, hasher: H) -> Builder<T, H>
+    where
+        H: BuildHasher + Clone,
+    {
+        Builder {
+            k: self.k,
+            width: self.width,
+            depth: self.depth,
+            decay: self.decay,
+            seed: self.seed,
+            hasher: Some(hasher),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T, S> Builder<T, S>
+where
+    T: Ord + Clone + Hash,
+    S: BuildHasher + Clone,
+{
+    /// Builds a sketch with the hasher supplied through [`Builder::hasher`].
+    pub fn build_with_hasher(self) -> Result<TopK<T, S>, BuilderError> {
+        let k = self.k.ok_or_else(|| BuilderError::MissingField {
+            field: "k".to_string(),
+        })?;
+        let width = self.width.ok_or_else(|| BuilderError::MissingField {
+            field: "width".to_string(),
+        })?;
+        let depth = self.depth.ok_or_else(|| BuilderError::MissingField {
+            field: "depth".to_string(),
+        })?;
+        let decay = self.decay.ok_or_else(|| BuilderError::MissingField {
+            field: "decay".to_string(),
+        })?;
+        let hasher = self.hasher.ok_or(BuilderError::MissingHasher)?;
+        let rng = Rng::with_seed(self.seed.unwrap_or(0));
+
+        Ok(TopK::with_components(k, width, depth, decay, hasher, rng))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::BuildHasherDefault;
+
+    type DeterministicState = BuildHasherDefault<DefaultHasher>;
+
+    #[test]
+    fn test_with_custom_hasher() {
+        let mut topk: TopK<String, DeterministicState> =
+            TopK::with_hasher(2, 64, 4, 0.9, DeterministicState::default());
+
+        topk.add("heavy", 10);
+        topk.add("light", 2);
+
+        assert_eq!(topk.count("heavy"), 10);
+        assert!(topk.contains_top_k("heavy"));
+    }
+
+    #[test]
+    fn test_builder_with_custom_hasher() {
+        let mut topk: TopK<String, DeterministicState> = TopK::builder()
+            .k(2)
+            .width(64)
+            .hasher(DeterministicState::default())
+            .depth(4)
+            .decay(0.9)
+            .build_with_hasher()
+            .unwrap();
+
+        topk.add("heavy", 10);
+        assert_eq!(topk.count("heavy"), 10);
+    }
+
+    #[test]
+    fn test_custom_hasher_serialization_roundtrip() {
+        let mut topk: TopK<Vec<u8>, DeterministicState> =
+            TopK::with_hasher(2, 64, 4, 0.9, DeterministicState::default());
+        topk.add(b"heavy".as_slice(), 10);
+
+        let bytes = topk.to_bytes();
+        let restored = TopK::<Vec<u8>, DeterministicState>::from_bytes_with_hasher(
+            &bytes,
+            DeterministicState::default(),
+        )
+        .unwrap();
+
+        assert_eq!(restored.count(b"heavy".as_slice()), 10);
+        assert_eq!(restored.list(), topk.list());
+    }
 
     #[test]
     fn test_mem_bytes_covers_rows_and_decay_table() {

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- support pluggable `BuildHasher` implementations for `TopK`
+
 ## [0.7.1](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.7.0...v0.7.1) - 2026-08-31
 
 ### Added

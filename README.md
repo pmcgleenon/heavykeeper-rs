@@ -43,6 +43,25 @@ for node in topk.list() {
 }
 ```
 
+`TopK` uses aHash by default, and accepts any cloneable
+[`BuildHasher`](https://doc.rust-lang.org/std/hash/trait.BuildHasher.html):
+
+```rust
+use heavykeeper::TopK;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::BuildHasherDefault;
+
+type MyHasher = BuildHasherDefault<DefaultHasher>;
+
+let mut topk: TopK<String, MyHasher> =
+    TopK::with_hasher(10, 1000, 4, 0.9, MyHasher::default());
+topk.add("example item", 5);
+```
+
+The builder supports custom hashers through `hasher(...).build_with_hasher()`.
+Serialized custom-hasher sketches can be restored with
+`TopK::from_bytes_with_hasher` by supplying the same hasher configuration.
+
 # Variants
 
 The crate ships three top-K sketches that share the same public API
@@ -71,8 +90,9 @@ Pick by workload:
 - **`BucketedTopK`** — best general-purpose insert throughput; closest to `TopK`'s cost model with a single bucket per key.
 - **`CuckooTopK`** — best accuracy *and* throughput on heavy-hitter-skewed traffic (the elephant-flow use case). Each bucket has a single lobby cell with probabilistic decay plus `depth` non-decaying heavy slots; promoted items live in one of two cuckoo candidate buckets and are re-homed on collision via a kick chain (bound configurable via `CuckooBuilder::max_kicks`, default 8).
 
-All three support seedable construction, custom hashers, and `merge`
-between compatible instances. Errors are returned via
+All three support seedable construction and `merge` between compatible
+instances. `TopK` additionally supports any cloneable `BuildHasher`, as shown
+above. Errors are returned via
 `BuilderError`/`MergeError` enums; the infallible constructors
 (`new`, `with_seed`, `with_hasher`) trust the caller. Bucket indexing
 uses an AND-mask fast-path when `width` is a power of two; pick
