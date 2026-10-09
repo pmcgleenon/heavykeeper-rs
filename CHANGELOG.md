@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.7.1...v0.7.2) - 2026-10-03
+
+### Other
+
+- merge compatibility check for TopK
+- Add pluggable hasher for TopK
+
 ### Added
 
 - support pluggable `BuildHasher` implementations for `TopK`
