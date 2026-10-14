@@ -22,3 +22,6 @@ mod priority_queue;
 
 mod serialization;
 pub use serialization::DeserializeError;
+
+mod defrag;
+pub use defrag::Reallocator;

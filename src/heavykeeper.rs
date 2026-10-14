@@ -1,3 +1,4 @@
+use crate::defrag::{realloc_vec, Reallocator};
 use crate::hash_composition::HashComposer;
 use crate::priority_queue::TopKQueue;
 use crate::serialization::*;
@@ -418,6 +419,21 @@ where
             + rows
             + self.decay_thresholds.capacity() * size_of::<u64>()
             + self.priority_queue.mem_bytes(item_heap)
+    }
+
+    /// Relocate the sketch's large heap allocations through `reallocator`
+    /// (see [`Reallocator`]): each row of the bucket matrix, the row-pointer
+    /// array itself, the decay table, and the priority queue's vectors.
+    /// Logical contents (counts, tracked items, query results) are
+    /// unchanged.
+    pub fn realloc_large_heap_allocated_objects<R: Reallocator>(&mut self, reallocator: &mut R) {
+        for row in self.buckets.iter_mut() {
+            realloc_vec(row, reallocator);
+        }
+        realloc_vec(&mut self.buckets, reallocator);
+        realloc_vec(&mut self.decay_thresholds, reallocator);
+        self.priority_queue
+            .realloc_large_heap_allocated_objects(reallocator);
     }
 
     // Merge another HeavyKeeper into this one

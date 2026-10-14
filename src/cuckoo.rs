@@ -17,6 +17,7 @@ use thiserror::Error;
 
 use crate::priority_queue::TopKQueue;
 use crate::serialization::*;
+use crate::defrag::{realloc_large_heap_allocated_object, Reallocator};
 
 const DECAY_LOOKUP_SIZE: usize = 1024;
 
@@ -549,6 +550,18 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
 
         self.min_pq_count = self.priority_queue.min_count();
         Ok(())
+    }
+
+    /// Relocate the sketch's large heap allocations through `reallocator` (see
+    /// [`Reallocator`]): the `lobbies` and `heavy` bucket arrays, the decay
+    /// table, and the priority queue's vectors. Logical contents (counts,
+    /// tracked items, query results) are unchanged.
+    pub fn realloc_large_heap_allocated_objects<R: Reallocator>(&mut self, reallocator: &mut R) {
+        realloc_large_heap_allocated_object(&mut self.lobbies, reallocator);
+        realloc_large_heap_allocated_object(&mut self.heavy, reallocator);
+        realloc_large_heap_allocated_object(&mut self.decay_thresholds, reallocator);
+        self.priority_queue
+            .realloc_large_heap_allocated_objects(reallocator);
     }
 
     #[inline]
