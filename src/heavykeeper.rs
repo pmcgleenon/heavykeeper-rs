@@ -179,7 +179,7 @@ where
     depth: usize,
     decay: f64,
     decay_thresholds: Vec<u64>,
-    buckets: Vec<Vec<Bucket>>,
+    buckets: Vec<Bucket>, // depth rows of width cells, row-major
     priority_queue: TopKQueue<T, S>,
     hasher: S,
     random: Rng,
@@ -273,16 +273,13 @@ where
         rng: Rng,
     ) -> Self {
         // Pre-allocate with capacity to avoid resizing
-        let mut buckets = Vec::with_capacity(depth);
-        for _ in 0..depth {
-            buckets.push(vec![
-                Bucket {
-                    fingerprint: 0,
-                    count: 0
-                };
-                width
-            ]);
-        }
+        let buckets = vec![
+            Bucket {
+                fingerprint: 0,
+                count: 0
+            };
+            width * depth
+        ];
 
         let width_mask = if width > 1 && width.is_power_of_two() {
             width - 1
@@ -322,7 +319,7 @@ where
 
         for i in 0..self.depth {
             let bucket_idx = composer.next_bucket(self.width as u64, self.width_mask, i);
-            let bucket = &self.buckets[i][bucket_idx];
+            let bucket = &self.buckets[i * self.width + bucket_idx];
 
             if bucket.fingerprint == composer.fingerprint() {
                 min_count = min_count.min(bucket.count);
@@ -373,7 +370,7 @@ where
 
         for i in 0..self.depth {
             let bucket_idx = composer.next_bucket(self.width as u64, self.width_mask, i);
-            let bucket = &self.buckets[i][bucket_idx];
+            let bucket = &self.buckets[i * self.width + bucket_idx];
 
             if bucket.fingerprint == composer.fingerprint() {
                 min_count = min_count.min(bucket.count);
@@ -422,10 +419,10 @@ where
         let mut max_count: u64 = 0;
 
         for i in 0..self.depth {
-            let bucket_idx = composer.next_bucket(self.width as u64, self.width_mask, i);
+            let cell = i * self.width + composer.next_bucket(self.width as u64, self.width_mask, i);
 
             let (matches, empty) = {
-                let bucket = &self.buckets[i][bucket_idx];
+                let bucket = &self.buckets[cell];
                 (
                     bucket.fingerprint == composer.fingerprint(),
                     bucket.count == 0u64,
@@ -433,17 +430,17 @@ where
             };
 
             if matches || empty {
-                let bucket = &mut self.buckets[i][bucket_idx];
+                let bucket = &mut self.buckets[cell];
                 bucket.fingerprint = composer.fingerprint();
                 bucket.count = bucket.count.saturating_add(increment);
                 max_count = std::cmp::max(max_count, bucket.count);
             } else {
                 let mut remaining_incr = increment;
                 while remaining_incr > 0 {
-                    let current_count = self.buckets[i][bucket_idx].count;
+                    let current_count = self.buckets[cell].count;
                     let decay_threshold = self.decay_threshold(current_count);
                     let rand = self.random.u64(..);
-                    let bucket = &mut self.buckets[i][bucket_idx];
+                    let bucket = &mut self.buckets[cell];
                     if rand < decay_threshold {
                         bucket.count = bucket.count.saturating_sub(1);
 
@@ -521,14 +518,7 @@ where
         F: Fn(&T) -> usize,
     {
         use std::mem::size_of;
-        let outer = self.buckets.capacity() * size_of::<Vec<Bucket>>();
-        let rows: usize = self
-            .buckets
-            .iter()
-            .map(|row| row.capacity() * size_of::<Bucket>())
-            .sum();
-        outer
-            + rows
+        self.buckets.capacity() * size_of::<Bucket>()
             + self.decay_thresholds.capacity() * size_of::<u64>()
             + self.priority_queue.mem_bytes(item_heap)
     }
@@ -616,17 +606,15 @@ where
             .collect();
 
         // Merge bucket counts
-        for (self_row, other_row) in self.buckets.iter_mut().zip(other.buckets.iter()) {
-            for (self_bucket, other_bucket) in self_row.iter_mut().zip(other_row.iter()) {
-                if self_bucket.fingerprint == other_bucket.fingerprint {
-                    // Same item, add counts
-                    self_bucket.count = self_bucket.count.saturating_add(other_bucket.count);
-                } else if self_bucket.count == 0 {
-                    // Empty bucket in self, copy from other
-                    *self_bucket = other_bucket.clone();
-                }
-                // If different items and self bucket not empty, keep existing item
+        for (self_bucket, other_bucket) in self.buckets.iter_mut().zip(other.buckets.iter()) {
+            if self_bucket.fingerprint == other_bucket.fingerprint {
+                // Same item, add counts
+                self_bucket.count = self_bucket.count.saturating_add(other_bucket.count);
+            } else if self_bucket.count == 0 {
+                // Empty bucket in self, copy from other
+                *self_bucket = other_bucket.clone();
             }
+            // If different items and self bucket not empty, keep existing item
         }
 
         for (item, count) in other_updates.into_iter().chain(self_only_updates) {
@@ -637,17 +625,13 @@ where
     }
 }
 
-/// Parse a `CELL_SIZE`-aligned slice into `depth` rows of `width` buckets.
-fn parse_buckets(slice: &[u8], width: usize) -> Vec<Vec<Bucket>> {
+/// Parse a `CELL_SIZE`-aligned slice into row-major buckets.
+fn parse_buckets(slice: &[u8]) -> Vec<Bucket> {
     slice
-        .chunks_exact(width * CELL_SIZE)
-        .map(|row| {
-            row.chunks_exact(CELL_SIZE)
-                .map(|chunk| Bucket {
-                    fingerprint: u64::from_le_bytes(chunk[0..8].try_into().expect("8 bytes")),
-                    count: u64::from_le_bytes(chunk[8..16].try_into().expect("8 bytes")),
-                })
-                .collect()
+        .chunks_exact(CELL_SIZE)
+        .map(|chunk| Bucket {
+            fingerprint: u64::from_le_bytes(chunk[0..8].try_into().expect("8 bytes")),
+            count: u64::from_le_bytes(chunk[8..16].try_into().expect("8 bytes")),
         })
         .collect()
 }
@@ -690,7 +674,7 @@ where
         out.extend_from_slice(&self.decay.to_bits().to_le_bytes());
         out.extend_from_slice(&(self.top_items as u64).to_le_bytes());
 
-        for bucket in self.buckets.iter().flatten() {
+        for bucket in &self.buckets {
             out.extend_from_slice(&bucket.fingerprint.to_le_bytes());
             out.extend_from_slice(&bucket.count.to_le_bytes());
         }
@@ -732,7 +716,7 @@ where
                 detail: format!("size overflows usize (width*depth={cell_count})"),
             }
         })?;
-        let buckets = parse_buckets(reader.take(bucket_bytes, "buckets")?, width);
+        let buckets = parse_buckets(reader.take(bucket_bytes, "buckets")?);
 
         let pq_len = reader.take_usize("priority_queue length")?;
         if pq_len > top_items {
@@ -789,11 +773,7 @@ where
             .buckets
             .iter()
             .enumerate()
-            .flat_map(|(i, row)| {
-                row.iter()
-                    .enumerate()
-                    .map(move |(j, bucket)| (bucket, i, j))
-            })
+            .map(|(cell, bucket)| (bucket, cell / self.width, cell % self.width))
             .filter(|(bucket, _, _)| bucket.count != 0)
             .collect();
         buckets.sort_by(|a, b| b.0.count.cmp(&a.0.count));
@@ -1056,8 +1036,7 @@ mod tests {
         assert_eq!(topk.width, 100);
         assert_eq!(topk.depth, 5);
         assert_eq!(topk.decay, 0.9);
-        assert_eq!(topk.buckets.len(), 5);
-        assert_eq!(topk.buckets[0].len(), 100);
+        assert_eq!(topk.buckets.len(), 5 * 100);
         assert_eq!(topk.priority_queue.len(), 0);
     }
 
@@ -1476,9 +1455,9 @@ mod tests {
         // Verify bucket state
         let item_hash = topk.hasher.hash_one(&item);
         assert!(
-            topk.buckets.iter().any(|row| row
+            topk.buckets
                 .iter()
-                .any(|bucket| bucket.fingerprint == item_hash && bucket.count == 1)),
+                .any(|bucket| bucket.fingerprint == item_hash && bucket.count == 1),
             "Item should be inserted into an empty bucket with count 1"
         );
 
