@@ -157,14 +157,15 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
         Self::with_seed(k, width, depth, decay, 12345)
     }
 
-    /// Creates a sketch whose aHash hasher is seeded with `seed`.
+    /// Creates a sketch whose aHash hasher and decay RNG are both seeded with
+    /// `seed`.
     ///
     /// Sketches created with the same seed and parameters can be merged, and
     /// the same seed must be passed to [`from_bytes`](BucketedTopK::from_bytes)
     /// to restore one.
     pub fn with_seed(k: usize, width: usize, depth: usize, decay: f64, seed: u64) -> Self {
         let hasher = RandomState::with_seeds(seed, seed, seed, seed);
-        Self::with_hasher(k, width, depth, decay, hasher)
+        Self::with_components(k, width, depth, decay, hasher, Rng::with_seed(seed))
     }
 
     /// Caller-supplied hasher. Merge compatibility is probe-checked; see `merge`.

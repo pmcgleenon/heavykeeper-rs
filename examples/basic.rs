@@ -5,7 +5,8 @@ fn main() {
     // - k=10 (number of top items to track)
     // - width=1000 (size of hash table, larger values use more memory but reduce collisions)
     // - depth=4 (number of hash functions, more depth increases accuracy but uses more CPU)
-    // - decay=0.9 (decay factor for frequency counting, higher values give more weight to recent items)
+    // - decay=0.9 (base of the decay probability decay^count; higher values let colliding
+    //   items wear down a cell's count more readily)
 
     let mut topk: TopK<String> = TopK::new(10, 1000, 4, 0.9);
 

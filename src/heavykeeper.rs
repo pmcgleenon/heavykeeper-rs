@@ -107,6 +107,41 @@ pub enum BuilderError {
     /// `build_with_hasher` was called without first setting a hasher.
     #[error("Missing required field: hasher")]
     MissingHasher,
+
+    /// `depth` was `0`.
+    #[error("Invalid depth {depth}: must be >= 1")]
+    InvalidDepth {
+        /// The rejected depth.
+        depth: usize,
+    },
+
+    /// `width` was `0`.
+    #[error("Invalid width {width}: must be >= 1")]
+    InvalidWidth {
+        /// The rejected width.
+        width: usize,
+    },
+
+    /// `decay` was not a finite value in `0.0..=1.0`.
+    #[error("Invalid decay {decay}: must be a finite value in 0.0..=1.0")]
+    InvalidDecay {
+        /// The rejected decay.
+        decay: f64,
+    },
+}
+
+/// Checks the sketch parameters shared by both `build` methods.
+fn validate_parameters(width: usize, depth: usize, decay: f64) -> Result<(), BuilderError> {
+    if width < 1 {
+        return Err(BuilderError::InvalidWidth { width });
+    }
+    if depth < 1 {
+        return Err(BuilderError::InvalidDepth { depth });
+    }
+    if !decay.is_finite() || !(0.0..=1.0).contains(&decay) {
+        return Err(BuilderError::InvalidDecay { decay });
+    }
+    Ok(())
 }
 
 /// See [`DeserializeError`].
@@ -199,6 +234,7 @@ impl<T: Ord + Clone + Hash> TopK<T> {
 
     /// Creates a sketch with the fixed seed `12345`; see
     /// [`with_seed`](TopK::with_seed).
+    /// Use [`builder`](TopK::builder) for validated construction.
     pub fn new(k: usize, width: usize, depth: usize, decay: f64) -> Self {
         // Use a consistent seed for default initialization
         let seed = 12345; // Arbitrary but fixed seed
@@ -321,32 +357,13 @@ where
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
     {
-        if let Some(count) = self.priority_queue.get(item) {
-            return count;
-        }
-
-        let mut composer = HashComposer::new(&self.hasher, item);
-        let mut min_count = u64::MAX;
-
-        for i in 0..self.depth {
-            let bucket_idx = composer.next_bucket(self.width as u64, self.width_mask, i);
-            let bucket = &self.buckets[i][bucket_idx];
-
-            if bucket.fingerprint == composer.fingerprint() {
-                min_count = min_count.min(bucket.count);
-            }
-        }
-
-        if min_count == u64::MAX {
-            0
-        } else {
-            min_count
-        }
+        self.priority_queue
+            .get(item)
+            .unwrap_or_else(|| self.bucket_count(item))
     }
 
-    /// Test-only: the bucket count of `item`, ignoring the top-k.
-    #[cfg(test)]
-    pub fn bucket_count<Q>(&self, item: &Q) -> u64
+    /// The bucket count of `item`, ignoring the top-k.
+    fn bucket_count<Q>(&self, item: &Q) -> u64
     where
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
@@ -418,7 +435,7 @@ where
             if matches || empty {
                 let bucket = &mut self.buckets[i][bucket_idx];
                 bucket.fingerprint = composer.fingerprint();
-                bucket.count += increment;
+                bucket.count = bucket.count.saturating_add(increment);
                 max_count = std::cmp::max(max_count, bucket.count);
             } else {
                 let mut remaining_incr = increment;
@@ -572,12 +589,35 @@ where
             });
         }
 
+        // Top-k counts, using the pre-merge bucket count for the side that does
+        // not track an item.
+        let other_updates: Vec<(T, u64)> = other
+            .priority_queue
+            .iter()
+            .map(|(item, other_count)| {
+                let self_count = self
+                    .priority_queue
+                    .get(item)
+                    .unwrap_or_else(|| self.bucket_count(item));
+                (item.clone(), self_count.saturating_add(other_count))
+            })
+            .collect();
+        let self_only_updates: Vec<(T, u64)> = self
+            .priority_queue
+            .iter()
+            .filter(|(item, _)| other.priority_queue.get(item).is_none())
+            .map(|(item, self_count)| {
+                let other_count = other.bucket_count(item);
+                (item.clone(), self_count.saturating_add(other_count))
+            })
+            .collect();
+
         // Merge bucket counts
         for (self_row, other_row) in self.buckets.iter_mut().zip(other.buckets.iter()) {
             for (self_bucket, other_bucket) in self_row.iter_mut().zip(other_row.iter()) {
                 if self_bucket.fingerprint == other_bucket.fingerprint {
                     // Same item, add counts
-                    self_bucket.count += other_bucket.count;
+                    self_bucket.count = self_bucket.count.saturating_add(other_bucket.count);
                 } else if self_bucket.count == 0 {
                     // Empty bucket in self, copy from other
                     *self_bucket = other_bucket.clone();
@@ -586,10 +626,8 @@ where
             }
         }
 
-        // Merge priority queues
-        for (item, count) in other.priority_queue.iter() {
-            let self_count = self.priority_queue.get(item).unwrap_or(0);
-            self.priority_queue.upsert(item.clone(), self_count + count);
+        for (item, count) in other_updates.into_iter().chain(self_only_updates) {
+            self.priority_queue.upsert(item, count);
         }
 
         Ok(())
@@ -808,7 +846,9 @@ impl<T: Ord + Clone + Hash> Builder<T> {
     /// # Errors
     ///
     /// Returns [`BuilderError::MissingField`] if `k`, `width`, `depth`, or
-    /// `decay` was not set.
+    /// `decay` was not set, and [`BuilderError::InvalidWidth`],
+    /// [`BuilderError::InvalidDepth`], or [`BuilderError::InvalidDecay`] for an
+    /// out-of-range value.
     pub fn build(self) -> Result<TopK<T>, BuilderError> {
         let k = self.k.ok_or_else(|| BuilderError::MissingField {
             field: "k".to_string(),
@@ -822,6 +862,7 @@ impl<T: Ord + Clone + Hash> Builder<T> {
         let decay = self.decay.ok_or_else(|| BuilderError::MissingField {
             field: "decay".to_string(),
         })?;
+        validate_parameters(width, depth, decay)?;
 
         let hasher = self.hasher.unwrap_or_else(|| {
             if let Some(seed) = self.seed {
@@ -900,8 +941,9 @@ where
     /// # Errors
     ///
     /// Returns [`BuilderError::MissingField`] if `k`, `width`, `depth`, or
-    /// `decay` was not set, and [`BuilderError::MissingHasher`] if no hasher
-    /// was set.
+    /// `decay` was not set, [`BuilderError::MissingHasher`] if no hasher was
+    /// set, and [`BuilderError::InvalidWidth`], [`BuilderError::InvalidDepth`],
+    /// or [`BuilderError::InvalidDecay`] for an out-of-range value.
     pub fn build_with_hasher(self) -> Result<TopK<T, S>, BuilderError> {
         let k = self.k.ok_or_else(|| BuilderError::MissingField {
             field: "k".to_string(),
@@ -915,6 +957,7 @@ where
         let decay = self.decay.ok_or_else(|| BuilderError::MissingField {
             field: "decay".to_string(),
         })?;
+        validate_parameters(width, depth, decay)?;
         let hasher = self.hasher.ok_or(BuilderError::MissingHasher)?;
         let rng = Rng::with_seed(self.seed.unwrap_or(0));
 
