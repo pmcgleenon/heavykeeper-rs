@@ -5,39 +5,82 @@ use thiserror::Error;
 /// Error returned by every variant's `from_bytes` (aliased per variant).
 #[derive(Error, Debug)]
 pub enum DeserializeError {
+    /// The input ended before a field could be read in full.
     #[error(
         "Byte stream too short while reading {field}: need {needed} byte(s), have {actual}"
     )]
     UnexpectedEof {
+        /// Name of the field being read.
         field: &'static str,
+        /// Number of bytes the field requires.
         needed: usize,
+        /// Number of bytes that were left in the input.
         actual: usize,
     },
 
+    /// The input does not start with the `HVYK` magic bytes.
     #[error("Not a heavykeeper sketch: bad magic bytes {actual:02x?} (expected {expected:02x?})")]
-    BadMagic { expected: [u8; 4], actual: [u8; 4] },
+    BadMagic {
+        /// The expected magic bytes (`b"HVYK"`).
+        expected: [u8; 4],
+        /// The first four bytes of the input.
+        actual: [u8; 4],
+    },
 
+    /// The input was written by a different sketch type.
     #[error("Payload is a different sketch variant: got tag {actual} (expected {expected})")]
-    WrongVariant { expected: u8, actual: u8 },
+    WrongVariant {
+        /// Variant tag of the sketch type being restored.
+        expected: u8,
+        /// Variant tag found in the input.
+        actual: u8,
+    },
 
+    /// The supplied seed or hasher does not hash like the one that wrote the
+    /// input.
     #[error("Hasher mismatch: the supplied hasher produces probe {actual} but the payload holds {expected} (wrong seed, a different hasher, or a different ahash version/architecture)")]
-    HasherMismatch { expected: u64, actual: u64 },
+    HasherMismatch {
+        /// Probe hash stored in the input.
+        expected: u64,
+        /// Probe hash produced by the supplied seed or hasher.
+        actual: u64,
+    },
 
+    /// The input uses a serialization format version this build cannot read.
     #[error("Unsupported serialization version {version} (this build expects {expected})")]
-    UnsupportedVersion { version: u8, expected: u8 },
+    UnsupportedVersion {
+        /// Format version found in the input.
+        version: u8,
+        /// Format version this build reads and writes.
+        expected: u8,
+    },
 
+    /// A field holds an out-of-range value.
     #[error("Invalid {field} value: {detail}")]
-    InvalidField { field: &'static str, detail: String },
+    InvalidField {
+        /// Name of the invalid field.
+        field: &'static str,
+        /// Description of the problem.
+        detail: String,
+    },
 
+    /// A stored length exceeds the limit set by the sketch parameters.
     #[error("Length mismatch for {field}: payload holds {actual} but expected {expected}")]
     LengthMismatch {
+        /// Name of the field.
         field: &'static str,
+        /// Length stored in the input.
         actual: usize,
+        /// Maximum length allowed by the sketch parameters.
         expected: usize,
     },
 
+    /// The input has extra bytes after the end of the sketch.
     #[error("{count} unexpected trailing byte(s) after the sketch payload")]
-    TrailingBytes { count: usize },
+    TrailingBytes {
+        /// Number of extra bytes.
+        count: usize,
+    },
 }
 
 /// Magic tag at the start of every serialized sketch (`b"HVYK"`).
