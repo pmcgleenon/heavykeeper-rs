@@ -21,9 +21,15 @@ const VARIANT: u8 = 1;
 /// Probe hashed at merge time to detect mismatched hashers.
 const MERGE_HASHER_PROBE: &[u8] = b"heavykeeper-merge-compat-probe";
 
+/// An item and its estimated count, as returned by [`BucketedTopK::list`].
+///
+/// The [`Ord`] implementation compares `count` only, in reverse, so sorting a
+/// `Vec<BucketedNode<T>>` in ascending order puts the highest count first.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BucketedNode<T> {
+    /// The tracked item.
     pub item: T,
+    /// The item's estimated count.
     pub count: u64,
 }
 
@@ -39,44 +45,79 @@ impl<T: Ord> PartialOrd for BucketedNode<T> {
     }
 }
 
+/// Error returned by [`BucketedTopK::merge`] when the two sketches are not
+/// compatible.
 #[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug)]
 pub enum BucketedMergeError {
+    /// The sketches have different `width`s.
     #[error("Incompatible width: self ({self_width}) != other ({other_width})")]
     IncompatibleWidth {
+        /// Width of the sketch being merged into.
         self_width: usize,
+        /// Width of the sketch passed to `merge`.
         other_width: usize,
     },
 
+    /// The sketches have different `depth`s.
     #[error("Incompatible depth: self ({self_depth}) != other ({other_depth})")]
     IncompatibleDepth {
+        /// Depth of the sketch being merged into.
         self_depth: usize,
+        /// Depth of the sketch passed to `merge`.
         other_depth: usize,
     },
 
+    /// The sketches have different `decay` values.
     #[error("Incompatible decay: self ({self_decay}) != other ({other_decay})")]
-    IncompatibleDecay { self_decay: f64, other_decay: f64 },
+    IncompatibleDecay {
+        /// Decay of the sketch being merged into.
+        self_decay: f64,
+        /// Decay of the sketch passed to `merge`.
+        other_decay: f64,
+    },
 
+    /// The sketches track a different number of top items (`k`).
     #[error("Incompatible top_items: self ({self_items}) != other ({other_items})")]
     IncompatibleTopItems {
+        /// `k` of the sketch being merged into.
         self_items: usize,
+        /// `k` of the sketch passed to `merge`.
         other_items: usize,
     },
 
+    /// The sketches hash items differently (different seeds or hasher state).
     #[error("Incompatible hashers: sketches were built with different seeds or hasher state")]
     IncompatibleHasher,
 }
 
+/// Error returned by the [`BucketedTopK`] builder's `build`.
 #[derive(Error, Debug)]
 pub enum BucketedBuilderError {
+    /// A required parameter (`k`, `width`, `depth`, or `decay`) was not set.
     #[error("Missing required field: {field}")]
-    MissingField { field: String },
+    MissingField {
+        /// Name of the missing parameter.
+        field: String,
+    },
+    /// `depth` was `0`.
     #[error("Invalid depth {depth}: must be >= 1")]
-    InvalidDepth { depth: usize },
+    InvalidDepth {
+        /// The rejected depth.
+        depth: usize,
+    },
+    /// `width` was `0`.
     #[error("Invalid width {width}: must be >= 1")]
-    InvalidWidth { width: usize },
+    InvalidWidth {
+        /// The rejected width.
+        width: usize,
+    },
+    /// `decay` was not a finite value in `0.0..=1.0`.
     #[error("Invalid decay {decay}: must be a finite value in 0.0..=1.0")]
-    InvalidDecay { decay: f64 },
+    InvalidDecay {
+        /// The rejected decay.
+        decay: f64,
+    },
 }
 
 /// See [`DeserializeError`].
@@ -89,6 +130,8 @@ fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Box<[u64]> {
         .into_boxed_slice()
 }
 
+/// A HeavyKeeper variant with `width` buckets of `depth` cells, where each
+/// item hashes to a single bucket.
 #[derive(Clone)]
 pub struct BucketedTopK<T: Ord + Clone + Hash> {
     width: usize,
@@ -107,10 +150,18 @@ pub struct BucketedTopK<T: Ord + Clone + Hash> {
 }
 
 impl<T: Ord + Clone + Hash> BucketedTopK<T> {
+    /// Creates a sketch with the fixed seed `12345`; see
+    /// [`with_seed`](BucketedTopK::with_seed). Use
+    /// [`builder`](BucketedTopK::builder) for validated construction.
     pub fn new(k: usize, width: usize, depth: usize, decay: f64) -> Self {
         Self::with_seed(k, width, depth, decay, 12345)
     }
 
+    /// Creates a sketch whose aHash hasher is seeded with `seed`.
+    ///
+    /// Sketches created with the same seed and parameters can be merged, and
+    /// the same seed must be passed to [`from_bytes`](BucketedTopK::from_bytes)
+    /// to restore one.
     pub fn with_seed(k: usize, width: usize, depth: usize, decay: f64, seed: u64) -> Self {
         let hasher = RandomState::with_seeds(seed, seed, seed, seed);
         Self::with_hasher(k, width, depth, decay, hasher)
@@ -134,6 +185,7 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
         )
     }
 
+    /// Returns a builder for configuring a sketch with validated parameters.
     pub fn builder() -> BucketedBuilder<T> {
         BucketedBuilder::new()
     }
@@ -182,6 +234,7 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
         start..start + self.depth
     }
 
+    /// Records `increment` occurrences of `item`.
     pub fn add<Q>(&mut self, item: &Q, increment: u64)
     where
         T: Borrow<Q>,
@@ -190,6 +243,9 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
         let _ = self.add_with_evicted(item, increment);
     }
 
+    /// Same as [`add`](BucketedTopK::add), but returns `(evicted, inserted)`:
+    /// the item evicted from the top-k by this call, if any, and whether
+    /// `item` newly entered the top-k.
     pub fn add_with_evicted<Q>(&mut self, item: &Q, increment: u64) -> (Option<T>, bool)
     where
         T: Borrow<Q>,
@@ -258,6 +314,7 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
         (evicted, inserted)
     }
 
+    /// Returns the estimated count of `item`.
     pub fn count<Q>(&self, item: &Q) -> u64
     where
         T: Borrow<Q>,
@@ -269,6 +326,8 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
         self.bucket_count(item)
     }
 
+    /// Returns the count of the cell holding `item`'s fingerprint, ignoring
+    /// the top-k, or `0` if there is no such cell.
     pub fn bucket_count<Q>(&self, item: &Q) -> u64
     where
         T: Borrow<Q>,
@@ -316,6 +375,7 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
         self.priority_queue.contains(item)
     }
 
+    /// Returns the top-k items, ordered by descending count.
     pub fn list(&self) -> Vec<BucketedNode<T>> {
         let mut nodes: Vec<BucketedNode<T>> = self
             .priority_queue
@@ -610,6 +670,7 @@ impl<T: Ord + Clone + Hash> BucketedTopK<T> {
     }
 }
 
+/// Builder for [`BucketedTopK`], created by [`BucketedTopK::builder`].
 pub struct BucketedBuilder<T> {
     k: Option<usize>,
     width: Option<usize>,
@@ -627,6 +688,8 @@ impl<T: Ord + Clone + Hash> Default for BucketedBuilder<T> {
 }
 
 impl<T: Ord + Clone + Hash> BucketedBuilder<T> {
+    /// Creates a builder with no parameters set. Same as
+    /// [`BucketedTopK::builder`].
     pub fn new() -> Self {
         Self {
             k: None,
@@ -638,31 +701,45 @@ impl<T: Ord + Clone + Hash> BucketedBuilder<T> {
             _phantom: std::marker::PhantomData,
         }
     }
+    /// Sets the number of top items to track. Required.
     pub fn k(mut self, k: usize) -> Self {
         self.k = Some(k);
         self
     }
+    /// Sets the number of buckets. Required.
     pub fn width(mut self, w: usize) -> Self {
         self.width = Some(w);
         self
     }
+    /// Sets the number of cells per bucket. Required.
     pub fn depth(mut self, d: usize) -> Self {
         self.depth = Some(d);
         self
     }
+    /// Sets the decay base (see the [crate-level docs](crate#parameters)).
+    /// Required.
     pub fn decay(mut self, d: f64) -> Self {
         self.decay = Some(d);
         self
     }
+    /// Seeds the decay RNG, and the hasher when no hasher is set.
     pub fn seed(mut self, s: u64) -> Self {
         self.seed = Some(s);
         self
     }
+    /// Sets the aHash hasher, overriding [`seed`](BucketedBuilder::seed) for
+    /// hashing.
     pub fn hasher(mut self, h: RandomState) -> Self {
         self.hasher = Some(h);
         self
     }
 
+    /// Validates the parameters and builds the sketch.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a parameter is missing, `width` or `depth` is `0`,
+    /// or `decay` is not a finite value in `0.0..=1.0`.
     pub fn build(self) -> Result<BucketedTopK<T>, BucketedBuilderError> {
         let k = self
             .k

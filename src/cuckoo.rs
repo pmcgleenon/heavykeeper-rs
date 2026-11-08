@@ -32,30 +32,48 @@ pub const DEFAULT_MAX_CUCKOO_KICKS: usize = 8;
 /// Probe hashed at merge time to detect mismatched hashers.
 const MERGE_HASHER_PROBE: &[u8] = b"heavykeeper-merge-compat-probe";
 
+/// Error returned by [`CuckooTopK::merge`] when the two sketches are not
+/// compatible.
 #[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug)]
 pub enum CuckooMergeError {
+    /// The sketches have different `width`s.
     #[error("Incompatible width: self ({self_width}) != other ({other_width})")]
     IncompatibleWidth {
+        /// Width of the sketch being merged into.
         self_width: usize,
+        /// Width of the sketch passed to `merge`.
         other_width: usize,
     },
 
+    /// The sketches have different `depth`s.
     #[error("Incompatible depth: self ({self_depth}) != other ({other_depth})")]
     IncompatibleDepth {
+        /// Depth of the sketch being merged into.
         self_depth: usize,
+        /// Depth of the sketch passed to `merge`.
         other_depth: usize,
     },
 
+    /// The sketches have different `decay` values.
     #[error("Incompatible decay: self ({self_decay}) != other ({other_decay})")]
-    IncompatibleDecay { self_decay: f64, other_decay: f64 },
+    IncompatibleDecay {
+        /// Decay of the sketch being merged into.
+        self_decay: f64,
+        /// Decay of the sketch passed to `merge`.
+        other_decay: f64,
+    },
 
+    /// The sketches track a different number of top items (`k`).
     #[error("Incompatible top_items: self ({self_items}) != other ({other_items})")]
     IncompatibleTopItems {
+        /// `k` of the sketch being merged into.
         self_items: usize,
+        /// `k` of the sketch passed to `merge`.
         other_items: usize,
     },
 
+    /// The sketches hash items differently (different seeds or hasher state).
     #[error("Incompatible hashers: sketches were built with different seeds or hasher state")]
     IncompatibleHasher,
 }
@@ -63,23 +81,50 @@ pub enum CuckooMergeError {
 /// See [`DeserializeError`].
 pub type CuckooDeserializeError = DeserializeError;
 
+/// Error returned by the [`CuckooTopK`] builder's `build`.
 #[derive(Error, Debug)]
 pub enum CuckooBuilderError {
+    /// A required parameter (`k`, `width`, `depth`, or `decay`) was not set.
     #[error("Missing required field: {field}")]
-    MissingField { field: String },
+    MissingField {
+        /// Name of the missing parameter.
+        field: String,
+    },
+    /// `depth` was `0`.
     #[error("Invalid depth {depth}: must be >= 1")]
-    InvalidDepth { depth: usize },
+    InvalidDepth {
+        /// The rejected depth.
+        depth: usize,
+    },
+    /// `width` was `0`.
     #[error("Invalid width {width}: must be >= 1")]
-    InvalidWidth { width: usize },
+    InvalidWidth {
+        /// The rejected width.
+        width: usize,
+    },
+    /// `decay` was not a finite value in `0.0..=1.0`.
     #[error("Invalid decay {decay}: must be a finite value in 0.0..=1.0")]
-    InvalidDecay { decay: f64 },
+    InvalidDecay {
+        /// The rejected decay.
+        decay: f64,
+    },
+    /// `max_kicks` was `0`.
     #[error("Invalid max_kicks {max_kicks}: must be >= 1")]
-    InvalidMaxKicks { max_kicks: usize },
+    InvalidMaxKicks {
+        /// The rejected kick limit.
+        max_kicks: usize,
+    },
 }
 
+/// An item and its estimated count, as returned by [`CuckooTopK::list`].
+///
+/// The [`Ord`] implementation compares `count` only, in reverse, so sorting a
+/// `Vec<CuckooNode<T>>` in ascending order puts the highest count first.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CuckooNode<T> {
+    /// The tracked item.
     pub item: T,
+    /// The item's estimated count.
     pub count: u64,
 }
 
@@ -357,18 +402,22 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
         nodes
     }
 
+    /// Returns the number of buckets.
     pub fn width(&self) -> usize {
         self.width
     }
 
+    /// Returns the number of heavy slots per bucket.
     pub fn depth(&self) -> usize {
         self.depth
     }
 
+    /// Returns the decay base.
     pub fn decay(&self) -> f64 {
         self.decay
     }
 
+    /// Returns `k`, the number of items tracked in the top-k.
     pub fn top_items(&self) -> usize {
         self.top_items
     }
@@ -903,6 +952,7 @@ impl CuckooTopK<Vec<u8>> {
     }
 }
 
+/// Builder for [`CuckooTopK`], created by [`CuckooTopK::builder`].
 pub struct CuckooBuilder<T> {
     k: Option<usize>,
     width: Option<usize>,
@@ -921,6 +971,8 @@ impl<T: Ord + Clone + Hash> Default for CuckooBuilder<T> {
 }
 
 impl<T: Ord + Clone + Hash> CuckooBuilder<T> {
+    /// Creates a builder with no parameters set. Same as
+    /// [`CuckooTopK::builder`].
     pub fn new() -> Self {
         Self {
             k: None,
@@ -933,26 +985,34 @@ impl<T: Ord + Clone + Hash> CuckooBuilder<T> {
             _phantom: std::marker::PhantomData,
         }
     }
+    /// Sets the number of top items to track. Required.
     pub fn k(mut self, k: usize) -> Self {
         self.k = Some(k);
         self
     }
+    /// Sets the number of buckets. Required.
     pub fn width(mut self, w: usize) -> Self {
         self.width = Some(w);
         self
     }
+    /// Sets the number of heavy slots per bucket. Required.
     pub fn depth(mut self, d: usize) -> Self {
         self.depth = Some(d);
         self
     }
+    /// Sets the decay base for lobby cells (see the
+    /// [crate-level docs](crate#parameters)). Required.
     pub fn decay(mut self, d: f64) -> Self {
         self.decay = Some(d);
         self
     }
+    /// Seeds the decay RNG, and the hasher when no hasher is set.
     pub fn seed(mut self, s: u64) -> Self {
         self.seed = Some(s);
         self
     }
+    /// Sets the aHash hasher, overriding [`seed`](CuckooBuilder::seed) for
+    /// hashing.
     pub fn hasher(mut self, h: RandomState) -> Self {
         self.hasher = Some(h);
         self
@@ -964,6 +1024,12 @@ impl<T: Ord + Clone + Hash> CuckooBuilder<T> {
         self
     }
 
+    /// Validates the parameters and builds the sketch.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a parameter is missing, `width`, `depth`, or
+    /// `max_kicks` is `0`, or `decay` is not a finite value in `0.0..=1.0`.
     pub fn build(self) -> Result<CuckooTopK<T>, CuckooBuilderError> {
         let k = self
             .k

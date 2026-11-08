@@ -25,9 +25,15 @@ struct Bucket {
     count: u64,
 }
 
+/// An item and its estimated count, as returned by [`TopK::list`].
+///
+/// The [`Ord`] implementation compares `count` only, in reverse, so sorting a
+/// `Vec<TopKNode<T>>` in ascending order puts the highest count first.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TopKNode<T> {
+    /// The tracked item.
     pub item: T,
+    /// The item's estimated count.
     pub count: u64,
 }
 
@@ -43,39 +49,62 @@ impl<T: Ord> PartialOrd for TopKNode<T> {
     }
 }
 
+/// Error returned by [`TopK::merge`] when the two sketches are not compatible.
 #[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug)]
 pub enum HeavyKeeperError {
+    /// The sketches have different `width`s.
     #[error("Incompatible width: self ({self_width}) != other ({other_width})")]
     IncompatibleWidth {
+        /// Width of the sketch being merged into.
         self_width: usize,
+        /// Width of the sketch passed to `merge`.
         other_width: usize,
     },
 
+    /// The sketches have different `depth`s.
     #[error("Incompatible depth: self ({self_depth}) != other ({other_depth})")]
     IncompatibleDepth {
+        /// Depth of the sketch being merged into.
         self_depth: usize,
+        /// Depth of the sketch passed to `merge`.
         other_depth: usize,
     },
 
+    /// The sketches have different `decay` values.
     #[error("Incompatible decay: self ({self_decay}) != other ({other_decay})")]
-    IncompatibleDecay { self_decay: f64, other_decay: f64 },
+    IncompatibleDecay {
+        /// Decay of the sketch being merged into.
+        self_decay: f64,
+        /// Decay of the sketch passed to `merge`.
+        other_decay: f64,
+    },
 
+    /// The sketches track a different number of top items (`k`).
     #[error("Incompatible top_items: self ({self_items}) != other ({other_items})")]
     IncompatibleTopItems {
+        /// `k` of the sketch being merged into.
         self_items: usize,
+        /// `k` of the sketch passed to `merge`.
         other_items: usize,
     },
 
+    /// The sketches hash items differently (different seeds or hashers).
     #[error("Incompatible hasher: self and other were built with different hashers")]
     IncompatibleHasher,
 }
 
+/// Error returned by the [`TopK`] builder's `build` and `build_with_hasher`.
 #[derive(Error, Debug)]
 pub enum BuilderError {
+    /// A required parameter (`k`, `width`, `depth`, or `decay`) was not set.
     #[error("Missing required field: {field}")]
-    MissingField { field: String },
+    MissingField {
+        /// Name of the missing parameter.
+        field: String,
+    },
 
+    /// `build_with_hasher` was called without first setting a hasher.
     #[error("Missing required field: hasher")]
     MissingHasher,
 }
@@ -83,6 +112,24 @@ pub enum BuilderError {
 /// See [`DeserializeError`].
 pub type TopKDeserializeError = DeserializeError;
 
+/// The HeavyKeeper sketch from the paper: `depth` rows of `width` buckets.
+///
+/// `S` is the hasher; it defaults to aHash's [`RandomState`].
+///
+/// # Examples
+///
+/// ```
+/// use heavykeeper::TopK;
+///
+/// let mut topk: TopK<String> = TopK::new(3, 1024, 4, 0.9);
+/// for word in ["a", "b", "a", "c", "a", "b"] {
+///     topk.add(word, 1);
+/// }
+///
+/// assert_eq!(topk.count("a"), 3);
+/// assert!(topk.contains_top_k("b"));
+/// assert_eq!(topk.list()[0].item, "a");
+/// ```
 #[derive(Clone)]
 pub struct TopK<T, S = RandomState>
 where
@@ -103,6 +150,26 @@ where
     random: Rng,
 }
 
+/// Builder for [`TopK`], created by [`TopK::builder`].
+///
+/// `k`, `width`, `depth`, and `decay` must be set.
+///
+/// # Examples
+///
+/// ```
+/// use heavykeeper::TopK;
+///
+/// let mut topk: TopK<u64> = TopK::builder()
+///     .k(10)
+///     .width(1024)
+///     .depth(4)
+///     .decay(0.9)
+///     .seed(42)
+///     .build()
+///     .unwrap();
+/// topk.add(&7, 1);
+/// assert_eq!(topk.count(&7), 1);
+/// ```
 pub struct Builder<T, S = RandomState> {
     k: Option<usize>,
     width: Option<usize>,
@@ -125,17 +192,25 @@ fn precompute_decay_thresholds(decay: f64, num_entries: usize) -> Vec<u64> {
 }
 
 impl<T: Ord + Clone + Hash> TopK<T> {
+    /// Returns a builder for configuring a sketch.
     pub fn builder() -> Builder<T> {
         Builder::new()
     }
 
+    /// Creates a sketch with the fixed seed `12345`; see
+    /// [`with_seed`](TopK::with_seed).
     pub fn new(k: usize, width: usize, depth: usize, decay: f64) -> Self {
         // Use a consistent seed for default initialization
         let seed = 12345; // Arbitrary but fixed seed
         Self::with_seed(k, width, depth, decay, seed)
     }
 
-    // New constructor that takes a seed
+    /// Creates a sketch whose aHash hasher and decay RNG are both seeded with
+    /// `seed`.
+    ///
+    /// Sketches created with the same seed and parameters can be merged, and
+    /// the same seed must be passed to [`from_bytes`](TopK::from_bytes) to
+    /// restore one.
     pub fn with_seed(k: usize, width: usize, depth: usize, decay: f64, seed: u64) -> Self {
         let hasher = RandomState::with_seeds(seed, seed, seed, seed);
         Self::with_components(k, width, depth, decay, hasher, Rng::with_seed(seed))
@@ -240,6 +315,7 @@ where
         self.priority_queue.contains(item)
     }
 
+    /// Returns the estimated count of `item`.
     pub fn count<Q>(&self, item: &Q) -> u64
     where
         T: Borrow<Q>,
@@ -268,6 +344,7 @@ where
         }
     }
 
+    /// Test-only: the bucket count of `item`, ignoring the top-k.
     #[cfg(test)]
     pub fn bucket_count<Q>(&self, item: &Q) -> u64
     where
@@ -293,6 +370,7 @@ where
         }
     }
 
+    /// Records `increment` occurrences of `item`.
     pub fn add<Q>(&mut self, item: &Q, increment: u64)
     where
         T: Borrow<Q>,
@@ -301,6 +379,20 @@ where
         let _ = self.add_with_evicted(item, increment);
     }
 
+    /// Same as [`add`](TopK::add), but returns `(evicted, inserted)`: the item
+    /// evicted from the top-k by this call, if any, and whether `item` newly
+    /// entered the top-k.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use heavykeeper::TopK;
+    ///
+    /// let mut topk: TopK<String> = TopK::new(1, 1024, 4, 0.9);
+    /// assert_eq!(topk.add_with_evicted("a", 1), (None, true));
+    /// assert_eq!(topk.add_with_evicted("b", 5), (Some("a".to_string()), true));
+    /// assert_eq!(topk.add_with_evicted("b", 1), (None, false));
+    /// ```
     pub fn add_with_evicted<Q>(&mut self, item: &Q, increment: u64) -> (Option<T>, bool)
     where
         T: Borrow<Q>,
@@ -386,6 +478,7 @@ where
         ((last.powf(q) * rem_thr) * u64::MAX as f64) as u64
     }
 
+    /// Returns the top-k items, ordered by descending count.
     pub fn list(&self) -> Vec<TopKNode<T>> {
         let mut nodes = self
             .priority_queue
@@ -420,7 +513,31 @@ where
             + self.priority_queue.mem_bytes(item_heap)
     }
 
-    // Merge another HeavyKeeper into this one
+    /// Merges `other` into `self`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the sketches differ in `k`, `width`, `depth`,
+    /// `decay`, or hasher.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use heavykeeper::TopK;
+    ///
+    /// let mut a: TopK<String> = TopK::with_seed(10, 1024, 4, 0.9, 7);
+    /// let mut b: TopK<String> = TopK::with_seed(10, 1024, 4, 0.9, 7);
+    /// a.add("x", 3);
+    /// b.add("x", 4);
+    /// b.add("y", 1);
+    ///
+    /// a.merge(&b).unwrap();
+    /// assert_eq!(a.count("x"), 7);
+    /// assert!(a.contains_top_k("y"));
+    ///
+    /// let other_seed: TopK<String> = TopK::with_seed(10, 1024, 4, 0.9, 8);
+    /// assert!(a.merge(&other_seed).is_err());
+    /// ```
     pub fn merge(&mut self, other: &Self) -> Result<(), HeavyKeeperError> {
         if self.hasher.hash_one(MERGE_HASHER_PROBE) != other.hasher.hash_one(MERGE_HASHER_PROBE) {
             return Err(HeavyKeeperError::IncompatibleHasher);
@@ -621,6 +738,7 @@ where
     T: Ord + Clone + Hash + Debug,
     S: BuildHasher + Clone,
 {
+    /// Prints the sketch's state to standard output, for debugging.
     pub fn debug(&self) {
         println!("width: {}", self.width);
         println!("depth: {}", self.depth);
@@ -670,6 +788,7 @@ impl<T: Ord + Clone + Hash> Default for Builder<T> {
 }
 
 impl<T: Ord + Clone + Hash> Builder<T> {
+    /// Creates a builder with no parameters set. Same as [`TopK::builder`].
     pub fn new() -> Self {
         Self {
             k: None,
@@ -682,6 +801,14 @@ impl<T: Ord + Clone + Hash> Builder<T> {
         }
     }
 
+    /// Builds a sketch that uses aHash: the hasher set with
+    /// [`hasher`](Builder::hasher), else one seeded from
+    /// [`seed`](Builder::seed), else a randomly seeded one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuilderError::MissingField`] if `k`, `width`, `depth`, or
+    /// `decay` was not set.
     pub fn build(self) -> Result<TopK<T>, BuilderError> {
         let k = self.k.ok_or_else(|| BuilderError::MissingField {
             field: "k".to_string(),
@@ -714,21 +841,26 @@ impl<T, S> Builder<T, S>
 where
     T: Ord + Clone + Hash,
 {
+    /// Sets the number of top items to track. Required.
     pub fn k(mut self, k: usize) -> Self {
         self.k = Some(k);
         self
     }
 
+    /// Sets the number of buckets per row. Required.
     pub fn width(mut self, width: usize) -> Self {
         self.width = Some(width);
         self
     }
 
+    /// Sets the number of rows. Required.
     pub fn depth(mut self, depth: usize) -> Self {
         self.depth = Some(depth);
         self
     }
 
+    /// Sets the decay base (see the [crate-level docs](crate#parameters)).
+    /// Required.
     pub fn decay(mut self, decay: f64) -> Self {
         self.decay = Some(decay);
         self
@@ -764,6 +896,12 @@ where
     S: BuildHasher + Clone,
 {
     /// Builds a sketch with the hasher supplied through [`Builder::hasher`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuilderError::MissingField`] if `k`, `width`, `depth`, or
+    /// `decay` was not set, and [`BuilderError::MissingHasher`] if no hasher
+    /// was set.
     pub fn build_with_hasher(self) -> Result<TopK<T, S>, BuilderError> {
         let k = self.k.ok_or_else(|| BuilderError::MissingField {
             field: "k".to_string(),
