@@ -29,6 +29,10 @@
 //!   cell held by another item with count `c`, that count is decremented with
 //!   probability `decay^c`.
 //!
+//! The builders validate `width`, `depth`, and `decay` and return an error;
+//! the infallible constructors (`new`, `with_seed`, `with_hasher`) trust the
+//! caller.
+//!
 //! # Example
 //!
 //! ```
@@ -59,16 +63,20 @@
 //! architecture and aHash version, so bytes may not load on a different one.
 
 mod heavykeeper;
-pub use heavykeeper::{TopK, TopKDeserializeError, TopKNode};
+pub use heavykeeper::{
+    Builder, BuilderError, HeavyKeeperError, TopK, TopKDeserializeError, TopKNode,
+};
 
 mod bucketed;
 pub use bucketed::{
-    BucketedBuilderError, BucketedDeserializeError, BucketedMergeError, BucketedNode, BucketedTopK,
+    BucketedBuilder, BucketedBuilderError, BucketedDeserializeError, BucketedMergeError,
+    BucketedNode, BucketedTopK,
 };
 
 mod cuckoo;
 pub use cuckoo::{
-    CuckooBuilderError, CuckooDeserializeError, CuckooMergeError, CuckooNode, CuckooTopK,
+    CuckooBuilder, CuckooBuilderError, CuckooDeserializeError, CuckooMergeError, CuckooNode,
+    CuckooTopK, DEFAULT_MAX_CUCKOO_KICKS,
 };
 
 mod hash_composition;

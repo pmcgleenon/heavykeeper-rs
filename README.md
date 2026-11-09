@@ -92,9 +92,11 @@ Pick by workload:
 
 All three support seedable construction and `merge` between compatible
 instances. `TopK` additionally supports any cloneable `BuildHasher`, as shown
-above. Errors are returned via
-`BuilderError`/`MergeError` enums; the infallible constructors
-(`new`, `with_seed`, `with_hasher`) trust the caller. Bucket indexing
+above. The builders validate their parameters and return `BuilderError`,
+`BucketedBuilderError`, or `CuckooBuilderError`; the infallible constructors
+(`new`, `with_seed`, `with_hasher`) trust the caller. Merging incompatible
+sketches returns `HeavyKeeperError`, `BucketedMergeError`, or
+`CuckooMergeError`. Bucket indexing
 uses an AND-mask fast-path when `width` is a power of two; pick
 power-of-two widths in production for the best per-add cost.
 
