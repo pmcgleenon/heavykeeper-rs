@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.7.2...v0.7.3) - 2026-11-11
+
+### Fixed
+
+- make the three sketches validate and count consistently
+
+### Other
+
+- *(readme)* refresh throughput and accuracy figures
+- *(topk)* store the bucket rows in one row-major vector
+- skip the top-k queue lookup for items that cannot be admitted
+- document the public API
+
+### Removed
+
+- removed test
+
 ## [0.7.2](https://github.com/pmcgleenon/heavykeeper-rs/compare/v0.7.1...v0.7.2) - 2026-10-03
 
 ### Other
