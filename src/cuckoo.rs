@@ -800,12 +800,15 @@ impl<T: Ord + Clone + Hash> CuckooTopK<T> {
         T: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = T> + ?Sized,
     {
-        if self.priority_queue.update_if_present(item, count) {
-            self.min_pq_count = self.priority_queue.min_count();
+        // A full queue whose minimum is at least `count` cannot change: an absent item is
+        // rejected, and a tracked item already has a count of at least the minimum. Checking
+        // this first skips the queue's hash lookup for the cold majority of items.
+        if self.priority_queue.is_full() && count <= self.priority_queue.min_count() {
             return (None, false);
         }
 
-        if self.priority_queue.is_full() && count <= self.min_pq_count {
+        if self.priority_queue.update_if_present(item, count) {
+            self.min_pq_count = self.priority_queue.min_count();
             return (None, false);
         }
 

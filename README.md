@@ -70,12 +70,13 @@ The crate ships three top-K sketches that share the same public API
 
 | Sketch          | Layout                                           | Insert throughput on Zipf(s=1.2), 1M | Recall @ φ=0.0005 |
 | --------------- | ------------------------------------------------ | -----------------------------------: | ----------------: |
-| `TopK`          | `depth` independent rows × `width` buckets        |                       21.9 Melem / s |             0.949 |
-| `BucketedTopK`  | one bucket of `depth` cells per key               |                       35.8 Melem / s |             0.985 |
-| `CuckooTopK`    | per-bucket lobby + `depth` heavy slots, 2-bucket cuckoo |                       35.0 Melem / s |             1.000 |
+| `TopK`          | `depth` independent rows × `width` buckets        |                       34.8 Melem / s |             0.964 |
+| `BucketedTopK`  | one bucket of `depth` cells per key               |                       47.5 Melem / s |             0.985 |
+| `CuckooTopK`    | per-bucket lobby + `depth` heavy slots, 2-bucket cuckoo |                       47.1 Melem / s |             1.000 |
 
 Numbers are from `cargo bench --bench topk_vs_bucketed` at `K=100,
-width=4096, depth=4, decay=0.9` on `u64` keys. Recall is from
+width=4096, depth=4, decay=0.9` on `u64` keys, on one pinned core of an
+AWS `c6a.xlarge` (AMD EPYC 7R13, Zen 3). Recall is from
 `tests/accuracy_compare.rs` (paper-style heavy-hitter test, φ = 0.0005,
 1 M Zipf samples).
 
@@ -88,7 +89,7 @@ Pick by workload:
 
 - **`TopK`** — when you want the published algorithm and its bounds.
 - **`BucketedTopK`** — best general-purpose insert throughput; closest to `TopK`'s cost model with a single bucket per key.
-- **`CuckooTopK`** — best accuracy *and* throughput on heavy-hitter-skewed traffic (the elephant-flow use case). Each bucket has a single lobby cell with probabilistic decay plus `depth` non-decaying heavy slots; promoted items live in one of two cuckoo candidate buckets and are re-homed on collision via a kick chain (bound configurable via `CuckooBuilder::max_kicks`, default 8).
+- **`CuckooTopK`** — best accuracy on heavy-hitter-skewed traffic, at a modest throughput cost (the elephant-flow use case). Each bucket has a single lobby cell with probabilistic decay plus `depth` non-decaying heavy slots; promoted items live in one of two cuckoo candidate buckets and are re-homed on collision via a kick chain (bound configurable via `CuckooBuilder::max_kicks`, default 8).
 
 All three support seedable construction and `merge` between compatible
 instances. `TopK` additionally supports any cloneable `BuildHasher`, as shown
@@ -105,13 +106,13 @@ power-of-two widths in production for the best per-add cost.
 `examples/ip_files.rs` runs all three sketches over a CAIDA-style trace
 (27.5 M packets, 1.03 M distinct 13-byte flow keys = src IP : src port →
 dst IP : dst port + protocol). Same `K=1000, decay=0.95`, equal cell
-budgets across variants:
+budgets across variants, on the same pinned `c6a.xlarge` core:
 
 | Sketch          | Width × depth          | Throughput | hit\_ratio | ARE on reported | ARE on true top-K |
 | --------------- | ---------------------- | ---------: | ---------: | --------------: | ----------------: |
-| `TopK`          | 16384 × 2              | 15.7 Mpps  |     0.9260 |          0.0054 |            0.0743 |
-| `BucketedTopK`  | 8192 × 4               | 20.7 Mpps  |     0.9860 |          0.0035 |            0.0129 |
-| `CuckooTopK`    | 8192 × (1 + 4 heavy)   | 18.4 Mpps  | **0.9990** |      **0.0012** |        **0.0012** |
+| `TopK`          | 16384 × 2              | 27.9 Mpps  |     0.9290 |          0.0045 |            0.0716 |
+| `BucketedTopK`  | 8192 × 4               | 29.9 Mpps  |     0.9850 |          0.0033 |            0.0149 |
+| `CuckooTopK`    | 8192 × (1 + 4 heavy)   | 25.4 Mpps  | **0.9980** |      **0.0012** |        **0.0012** |
 
 # Other HeavyKeeper Implementations
 
